@@ -1,0 +1,1934 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gray Zone</title>
+<script>
+/* ── to share nebulae with friends, paste your firebase web config here (see README.md). leave null to keep everything in this browser. ── */
+window.GRAY_ZONE_FIREBASE = null;
+</script>
+<meta name="description" content="a place for thoughts that aren't finished yet.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;1,400&display=swap" rel="stylesheet">
+<style>
+/* layout idea: one full-bleed canvas of stars; all chrome is thin text at the edges, one panel slides in from the right (bottom on phones) */
+:root {
+  color-scheme: dark;
+  --bg: #1f1f20;          /* the grey field */
+  --ink: #e8e8e4;         /* white accent */
+  --mid: #b6b6b2;         /* body text on grey */
+  --dim: #8f8f8b;         /* quiet labels, still readable on --bg */
+  --black: #0e0e0f;       /* black accent */
+  --line: rgba(255, 255, 255, .17);
+  --soft: rgba(255, 255, 255, .08);
+  --panel: rgba(24, 24, 25, .9);
+  --font: 'JetBrains Mono', ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+  --panel-w: 384px;
+}
+* { box-sizing: border-box; margin: 0; }
+html, body { height: 100%; }
+body {
+  background: var(--bg); color: var(--ink);
+  font: 13px/1.65 var(--font); letter-spacing: .02em;
+  overflow: hidden; -webkit-font-smoothing: antialiased; -webkit-text-size-adjust: 100%;
+}
+button, input, textarea { font: inherit; color: inherit; letter-spacing: inherit; }
+button { background: none; border: 0; padding: 0; cursor: pointer; }
+a { color: var(--ink); text-underline-offset: 3px; text-decoration-thickness: 1px; }
+:focus-visible { outline: 1px solid var(--ink); outline-offset: 3px; }
+::selection { background: var(--ink); color: var(--black); }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+[hidden] { display: none !important; }
+
+#sky { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
+#sky:focus-visible { outline: none; }
+#sky.kb:focus-visible { outline: 1px solid var(--line); outline-offset: -6px; }
+#sky.dragging { cursor: grabbing; }
+#sky.point { cursor: pointer; }
+
+.grain { position: fixed; inset: 0; pointer-events: none; z-index: 1; opacity: .5;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .16 0'/%3E%3C/filter%3E%3Crect width='220' height='220' filter='url(%23n)'/%3E%3C/svg%3E"); }
+.vignette { position: fixed; inset: 0; pointer-events: none; z-index: 1;
+  background: radial-gradient(ellipse at 50% 46%, transparent 42%, rgba(0, 0, 0, .34) 100%); }
+
+/* ── buttons: bracketed text ── */
+.b { color: var(--mid); padding: 7px 0; white-space: nowrap; transition: color .25s; }
+.b::before { content: '[ '; color: var(--dim); }
+.b::after { content: ' ]'; color: var(--dim); }
+.b:hover { color: var(--ink); }
+.b[aria-pressed="true"], .b[aria-expanded="true"] { color: var(--ink); }
+.b[aria-pressed="true"]::before { content: '[·'; color: var(--ink); }
+.b[aria-pressed="true"]::after { content: '·]'; color: var(--ink); }
+.b.solid { color: var(--black); background: var(--ink); padding: 7px 10px; }
+.b.solid::before, .b.solid::after { content: none; }
+.b.solid:hover { background: #fff; }
+.link { color: var(--dim); border-bottom: 1px solid var(--soft); padding: 4px 0; transition: color .25s, border-color .25s; }
+.link:hover { color: var(--ink); border-color: var(--line); }
+
+/* ── top bar ── */
+.top { position: fixed; z-index: 6; top: 0; left: 0; right: 0; display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 16px 22px; pointer-events: none; }
+.top > * { pointer-events: auto; }
+@media (min-width: 721px) { .top { transition: right .7s cubic-bezier(.2, .7, .2, 1); } body.panel .top { right: var(--panel-w); } }
+.mark { display: flex; align-items: center; gap: 10px; color: var(--ink); letter-spacing: .34em; font-size: 12px; }
+.mark i { width: 7px; height: 7px; border: 1px solid var(--ink); border-radius: 50%; position: relative; }
+.mark i::after { content: ''; position: absolute; inset: 2px; background: var(--ink); border-radius: 50%; opacity: .7; }
+.nav { display: flex; gap: 18px; align-items: center; position: relative; }
+body[data-mode="landing"] .map-only, body[data-mode="drift"] .map-only, body[data-mode="compose"] .map-only { opacity: 0; pointer-events: none; visibility: hidden; }
+.map-only { transition: opacity .8s, visibility .8s; }
+
+.menu { position: absolute; top: 34px; right: 0; min-width: 264px; background: var(--panel); border: 1px solid var(--line);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); padding: 8px 0; display: flex; flex-direction: column; }
+.menu button { text-align: left; padding: 8px 16px; color: var(--mid); }
+.menu button:hover, .menu button:focus-visible { color: var(--ink); background: var(--soft); outline-offset: -1px; }
+.menu hr { border: 0; border-top: 1px solid var(--soft); margin: 6px 0; }
+.menu .unnamed { font-style: italic; color: var(--dim); }
+
+/* ── landing / composer ── */
+.landing { position: fixed; inset: 0; z-index: 4; display: grid; place-items: center; padding: 72px 24px 56px;
+  transition: opacity 1s ease, visibility 1s, filter 1s ease; }
+.landing.leaving { opacity: 0; filter: blur(6px); pointer-events: none; }
+.landing.gone { opacity: 0; visibility: hidden; pointer-events: none; }
+.landing form { width: min(560px, 100%); display: flex; flex-direction: column; gap: 14px; transform: translateY(-3vh); }
+.prompt { color: var(--ink); font-size: 15px; letter-spacing: .06em; }
+.target { color: var(--dim); font-size: 12px; display: flex; gap: 10px; align-items: baseline; }
+.target span { color: var(--mid); }
+#mind { width: 100%; resize: none; background: none; border: 0; outline: 0; color: var(--ink); caret-color: var(--ink);
+  font-size: 15px; line-height: 1.7; padding: 4px 0 6px; max-height: 38vh; overflow-y: auto; }
+#mind::placeholder { color: var(--dim); opacity: 1; }
+.rule { height: 1px; background: linear-gradient(90deg, var(--line), var(--line)) no-repeat left / 28% 100%, var(--soft);
+  transition: background-size 1.2s cubic-bezier(.2, .7, .2, 1); }
+form:focus-within .rule { background-size: 100% 100%; }
+.under { display: flex; justify-content: space-between; align-items: center; gap: 12px; min-height: 34px; color: var(--dim); font-size: 12px; }
+.go { opacity: 0; pointer-events: none; transition: opacity .5s, color .25s; }
+.go.on { opacity: 1; pointer-events: auto; }
+.wander { align-self: flex-start; margin-top: 18px; font-size: 12px; }
+@keyframes rise { from { opacity: 0; transform: translateY(8px); filter: blur(4px); } to { opacity: 1; transform: none; filter: none; } }
+.landing.first .prompt { animation: rise 1.6s .5s both; }
+.landing.first #mind, .landing.first .rule { animation: rise 1.6s 1s both; }
+.landing.first .under, .landing.first .wander { animation: rise 1.6s 1.7s both; }
+.top { animation: rise 1.6s .2s both; }
+
+/* gentle note shown instead of posting */
+.care { border-left: 1px solid var(--ink); padding: 4px 0 4px 14px; color: var(--mid); display: flex; flex-direction: column; gap: 8px; animation: rise .8s both; }
+.care p { max-width: 58ch; }
+.care .row { display: flex; gap: 2px 18px; flex-wrap: wrap; align-items: center; }
+
+/* ── captions ── */
+#caption { position: fixed; z-index: 5; left: 50%; bottom: 76px; transform: translateX(-50%); max-width: calc(100% - 40px); text-align: center;
+  color: var(--mid); font-size: 12px; letter-spacing: .08em; pointer-events: none; opacity: 0; transition: opacity .9s; }
+#caption.on { opacity: 1; }
+body[data-mode="drift"] #caption { bottom: auto; top: calc(50% + 46px); }
+#caption b { font-weight: 400; color: var(--ink); }
+
+/* ── hud ── */
+.hud { position: fixed; z-index: 5; bottom: 0; left: 0; right: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 14px 22px calc(14px + env(safe-area-inset-bottom, 0px)); pointer-events: none; }
+.hud > * { pointer-events: auto; }
+.readout { color: var(--dim); font-size: 11px; letter-spacing: .1em; font-variant-numeric: tabular-nums; pointer-events: none; white-space: pre; }
+.zoom { display: flex; gap: 14px; }
+.zoom .b { min-width: 34px; text-align: center; }
+
+#tip { position: fixed; z-index: 5; left: 0; top: 0; max-width: 300px; pointer-events: none; padding: 8px 10px; background: var(--panel);
+  border: 1px solid var(--soft); color: var(--mid); font-size: 12px; line-height: 1.55; opacity: 0; transition: opacity .25s; }
+#tip.on { opacity: 1; }
+#tip small { display: block; color: var(--dim); font-size: 11px; margin-top: 3px; }
+
+/* ── side panel ── */
+#panel { position: fixed; z-index: 7; top: 0; right: 0; bottom: 0; width: var(--panel-w); background: var(--panel);
+  border-left: 1px solid var(--line); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  transform: translateX(100%); visibility: hidden; transition: transform .7s cubic-bezier(.2, .7, .2, 1), visibility .7s;
+  overflow-y: auto; overscroll-behavior: contain; padding: 18px 24px 40px; display: flex; flex-direction: column; gap: 18px; }
+#panel.open { transform: none; visibility: visible; }
+#panel:focus { outline: none; }
+.p-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.crumb { color: var(--dim); text-align: left; font-size: 12px; border-bottom: 1px solid var(--soft); padding: 3px 0; }
+.crumb:hover { color: var(--ink); border-color: var(--line); }
+.x { color: var(--dim); width: 32px; height: 32px; font-size: 16px; }
+.x:hover { color: var(--ink); }
+.meta { color: var(--dim); font-size: 12px; }
+.thought { font-size: 15px; line-height: 1.75; color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; text-wrap: pretty; }
+h2 { font-size: 17px; font-weight: 400; letter-spacing: .04em; text-wrap: balance; }
+h2.unnamed { font-style: italic; color: var(--mid); }
+h3 { font-size: 11px; font-weight: 400; color: var(--dim); letter-spacing: .16em; }
+.question { color: var(--mid); font-size: 14px; }
+.sec { display: flex; flex-direction: column; gap: 9px; border-top: 1px solid var(--soft); padding-top: 16px; }
+.row { display: flex; gap: 0 18px; flex-wrap: wrap; align-items: center; }
+
+.settle { display: flex; align-items: center; gap: 12px; color: var(--mid); font-size: 12px; }
+.settle .bar { flex: none; width: 64px; height: 5px; border: 1px solid var(--line); position: relative; }
+.settle .bar i { position: absolute; inset: 0 auto 0 0; background: var(--ink); }
+
+.spectrum { display: flex; flex-direction: column; gap: 6px; }
+.spectrum .track { position: relative; height: 15px; }
+.spectrum .track::before { content: ''; position: absolute; left: 0; right: 0; top: 7px; height: 1px;
+  background: linear-gradient(90deg, var(--line), var(--soft) 50%, var(--line)); }
+.spectrum .track::after { content: ''; position: absolute; left: 50%; top: 4px; width: 1px; height: 7px; background: var(--dim); }
+.spectrum .dot { position: absolute; top: 3px; width: 9px; height: 9px; margin-left: -4.5px; border-radius: 50%; background: var(--ink); z-index: 1;
+  box-shadow: 0 0 0 3px var(--panel); transition: left .8s cubic-bezier(.2, .7, .2, 1); }
+.poles { display: flex; justify-content: space-between; gap: 16px; color: var(--mid); font-size: 12px; }
+.poles span:last-child { text-align: right; }
+.where { color: var(--dim); font-size: 12px; }
+
+input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 26px; background: none; cursor: ew-resize; }
+input[type="range"]::-webkit-slider-runnable-track { height: 1px; background: linear-gradient(90deg, var(--ink), var(--dim) 50%, var(--ink)); }
+input[type="range"]::-moz-range-track { height: 1px; background: linear-gradient(90deg, var(--ink), var(--dim) 50%, var(--ink)); }
+input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 11px; height: 17px; margin-top: -8px; background: var(--ink); border: 0; border-radius: 0; }
+input[type="range"]::-moz-range-thumb { width: 11px; height: 17px; background: var(--ink); border: 0; border-radius: 0; }
+
+.field { display: flex; flex-direction: column; gap: 5px; }
+.field label, .field .lab { color: var(--dim); font-size: 11px; letter-spacing: .12em; }
+.field input[type="text"], .field textarea { background: rgba(255, 255, 255, .03); border: 1px solid var(--line); border-radius: 0; padding: 9px 10px;
+  color: var(--ink); width: 100%; resize: vertical; outline: 0; }
+.field input[type="text"]:focus, .field textarea:focus { border-color: var(--ink); }
+.field input::placeholder, .field textarea::placeholder { color: var(--dim); opacity: 1; }
+.note { color: var(--dim); font-size: 12px; }
+.note.warn { color: var(--ink); }
+
+.list { list-style: none; padding: 0; display: flex; flex-direction: column; }
+.list button { display: block; width: 100%; text-align: left; padding: 10px 0 10px 14px; color: var(--mid); border-left: 1px solid var(--soft); transition: color .2s, border-color .2s; }
+.list button:hover, .list button:focus-visible { color: var(--ink); border-color: var(--ink); }
+.list small { display: block; color: var(--dim); font-size: 11px; margin-top: 2px; }
+
+.vote { border: 1px solid var(--soft); padding: 12px 14px; display: flex; flex-direction: column; gap: 9px; }
+.vote .lean { height: 3px; background: var(--soft); position: relative; }
+.vote .lean i { position: absolute; inset: 0 auto 0 0; background: var(--mid); transition: width .6s; }
+.vote q { color: var(--ink); quotes: '“' '”'; }
+
+/* ── dialogs ── */
+dialog { margin: auto; background: var(--panel); color: var(--ink); border: 1px solid var(--line); padding: 26px 28px;
+  width: min(480px, calc(100% - 32px)); max-height: calc(100% - 32px); overflow-y: auto; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+dialog::backdrop { background: rgba(14, 14, 15, .55); }
+dialog[open] { animation: rise .6s both; }
+dialog form, dialog .col { display: flex; flex-direction: column; gap: 16px; }
+dialog.about { width: min(620px, calc(100% - 32px)); }
+.about p { color: var(--mid); line-height: 1.9; }
+.about p.note { line-height: 1.65; max-width: 60ch; }
+.about p b { color: var(--ink); font-weight: 400; }
+.keys { color: var(--dim); font-size: 12px; display: grid; grid-template-columns: auto 1fr; gap: 3px 16px; }
+.keys kbd { font: inherit; color: var(--mid); }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+/* ── phones ── */
+@media (max-width: 720px) {
+  .top { padding: 14px 16px; }
+  .hud { padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px)); }
+  .readout { display: none; }
+  .b { padding: 10px 0; }
+  .b.solid { padding: 10px 12px; }
+  #panel { top: auto; left: 0; width: 100%; max-height: 62%; border-left: 0; border-top: 1px solid var(--line);
+    transform: translateY(100%); padding: 14px 18px calc(28px + env(safe-area-inset-bottom, 0px)); }
+  .menu { position: fixed; top: 52px; right: 16px; left: 16px; }
+  #caption { bottom: 64px; }
+  .under .hint { display: none; }
+  .go { opacity: .55; pointer-events: auto; }
+  .landing form { transform: translateY(-6vh); }
+  #tip { display: none; }
+  body.sheet .hud { opacity: 0; pointer-events: none; }
+  body.sheet .hud > * { pointer-events: none; }
+}
+.hud { transition: opacity .5s; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01s !important; animation-delay: 0s !important; transition-duration: .01s !important; }
+}
+
+/* ── three scales ── */
+.scales { display: flex; gap: 16px; align-items: center; }
+.scales .b[aria-pressed="true"]::before { content: '[ '; } .scales .b[aria-pressed="true"]::after { content: ' ]'; }
+.scales .b[aria-pressed="true"] { border-bottom: 1px solid var(--ink); }
+.nav { gap: 16px; }
+.mark span { white-space: nowrap; }
+a.b { text-decoration: none; display: inline-block; }
+#caption a { pointer-events: auto; }
+
+.skybar { position: fixed; z-index: 6; top: 58px; left: 0; right: 0; margin: 0 auto; width: min(620px, calc(100% - 44px));
+  display: none; gap: 2px 14px; align-items: center; flex-wrap: wrap; border-bottom: 1px solid var(--line); background: linear-gradient(rgba(31, 31, 32, .0), rgba(31, 31, 32, .55)); }
+body[data-mode="map"][data-space="sky"] .skybar { display: flex; animation: rise .8s both; }
+.skybar input { flex: 1 1 200px; min-width: 0; background: none; border: 0; outline: 0; padding: 9px 0; color: var(--ink); }
+.skybar input::placeholder { color: var(--dim); opacity: 1; }
+.skybar:focus-within { border-color: var(--ink); }
+@media (min-width: 721px) { body.panel .skybar { right: var(--panel-w); width: min(620px, calc(100% - var(--panel-w) - 44px)); } }
+
+.notes { color: var(--mid); white-space: pre-wrap; overflow-wrap: anywhere; border-left: 1px solid var(--soft); padding-left: 14px; }
+.field select { background: rgba(255, 255, 255, .03); border: 1px solid var(--line); border-radius: 0; padding: 9px 10px; color: var(--ink); width: 100%; font: inherit; letter-spacing: inherit; }
+.field select option { background: #1a1a1b; color: var(--ink); }
+.field input[readonly] { color: var(--mid); }
+.list li { display: flex; align-items: flex-start; }
+.list li > button:first-child { flex: 1; min-width: 0; }
+.list li > .x { flex: none; width: 34px; padding: 10px 0; border-left: 0; text-align: center; }
+.b:disabled { opacity: .45; cursor: default; }
+.menu { max-height: min(70vh, 560px); overflow-y: auto; }
+.menu button { display: flex; justify-content: space-between; gap: 14px; align-items: baseline; }
+.menu button small { color: var(--dim); font-size: 11px; white-space: nowrap; }
+.menu button[aria-pressed]::before { content: '·'; color: var(--ink); width: 10px; }
+.menu button[aria-pressed="false"]::before { content: ' '; white-space: pre; }
+.menu button[aria-pressed] { justify-content: flex-start; gap: 6px; }
+.menu button[aria-pressed="false"] { color: var(--dim); text-decoration: line-through; }
+.m-head { padding: 6px 16px 4px; color: var(--dim); font-size: 11px; letter-spacing: .16em; }
+.m-note { padding: 4px 16px 8px; color: var(--dim); font-size: 12px; }
+dialog#you { width: min(460px, calc(100% - 32px)); }
+
+@media (max-width: 720px) {
+  .top { flex-wrap: wrap; row-gap: 2px; }
+  .scales { order: 3; width: 100%; justify-content: center; gap: 20px; }
+  .nav { gap: 12px; }
+  .skybar { top: 96px; width: calc(100% - 32px); }
+  .skybar input { flex-basis: 100%; }
+}
+@media (max-width: 380px) { .mark span { display: none; } }
+</style>
+</head>
+<body data-mode="landing">
+<canvas id="sky" tabindex="0" role="application" aria-label="star map. arrow keys move between stars, enter opens one, shift and arrows pan, plus and minus zoom."></canvas>
+<div class="grain" aria-hidden="true"></div>
+<div class="vignette" aria-hidden="true"></div>
+
+<header class="top">
+  <button class="mark" id="mark" type="button" aria-label="gray zone. about this place"><i aria-hidden="true"></i><span>gray zone</span></button>
+  <div class="scales map-only" role="group" aria-label="where you are">
+    <button class="b" type="button" data-space="galaxy" aria-pressed="false">galaxy</button>
+    <button class="b" type="button" data-space="nebulae" aria-pressed="false">nebulae</button>
+    <button class="b" type="button" data-space="sky" aria-pressed="false">open sky</button>
+  </div>
+  <nav class="nav" aria-label="main">
+    <button class="b map-only" id="menuBtn" type="button" aria-expanded="false" aria-controls="menu">list</button>
+    <button class="b" id="youBtn" type="button">you</button>
+    <button class="b" id="aboutBtn" type="button">about</button>
+    <div class="menu" id="menu" hidden></div>
+  </nav>
+</header>
+
+<form class="skybar" id="skyBar" role="search" novalidate>
+  <label class="sr" for="skyQ">search the open sky</label>
+  <input type="text" id="skyQ" maxlength="160" autocomplete="off" placeholder="send a thought into the open sky">
+  <button class="b" type="submit">search</button>
+  <button class="b" type="button" id="skyGroup">by theme</button>
+  <button class="b" type="button" id="skySave">save</button>
+</form>
+
+<main class="landing first" id="landing">
+  <form id="compose" novalidate>
+    <p class="target" id="target" hidden>adding to <span id="targetName"></span> <button type="button" class="link" id="targetClear">put it in my galaxy instead</button></p>
+    <label class="prompt" for="mind">what's on your mind today?</label>
+    <textarea id="mind" rows="1" maxlength="600" placeholder="start anywhere. it doesn't need to be finished." autocomplete="off"></textarea>
+    <div class="rule" aria-hidden="true"></div>
+    <div class="under">
+      <span class="hint">enter to let it go · it lands in your galaxy first</span>
+      <button class="b go" id="go" type="submit">let it go</button>
+    </div>
+    <div id="care" hidden></div>
+    <button class="link wander" id="wander" type="button">or wander</button>
+  </form>
+</main>
+
+<div id="caption" role="status" aria-live="polite"></div>
+<div id="tip" aria-hidden="true"></div>
+<div id="live" class="sr" aria-live="polite"></div>
+
+<div class="hud map-only">
+  <button class="b" id="newBtn" type="button">+ thought</button>
+  <span class="readout" id="readout" aria-hidden="true"></span>
+  <div class="zoom">
+    <button class="b" id="zoomOut" type="button" aria-label="zoom out">−</button>
+    <button class="b" id="zoomIn" type="button" aria-label="zoom in">+</button>
+    <button class="b" id="zoomFit" type="button" aria-label="show everything here">all</button>
+  </div>
+</div>
+
+<aside id="panel" tabindex="-1" aria-label="details" aria-hidden="true"></aside>
+
+<dialog id="about" class="about" aria-labelledby="aboutTitle">
+  <div class="col">
+    <h2 id="aboutTitle">the gray space</h2>
+    <p><b>a place for thoughts that aren't finished yet.</b><br>
+    your galaxy keeps them. nebulae are small rooms. the open sky is the wider web.<br>
+    stars brighten as you refine them. nothing here is counted.</p>
+    <div class="keys" aria-label="keys">
+      <kbd>drag · scroll</kbd><span>pan and zoom</span>
+      <kbd>arrows</kbd><span>move between stars</span>
+      <kbd>enter</kbd><span>open a star</span>
+      <kbd>1 · 2 · 3</kbd><span>galaxy, nebulae, open sky</span>
+      <kbd>n</kbd><span>new thought</span>
+      <kbd>0</kbd><span>everything here</span>
+      <kbd>esc</kbd><span>close</span>
+    </div>
+    <p class="note" id="protoNote">this is a prototype. the sample nebulae are seeded voices, and what you write stays in this browser.</p>
+    <p class="note" id="storeNote" hidden>this browser isn't letting the page save, so this visit won't be remembered.</p>
+    <div class="row">
+      <button class="b" id="aboutClose" type="button">close</button>
+      <button class="b" id="wipe" type="button">clear my traces</button>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="you" aria-labelledby="youTitle">
+  <div class="col">
+    <h2 id="youTitle">you</h2>
+    <div class="field"><label for="alias">the name others see in nebulae</label><input type="text" id="alias" maxlength="24" autocomplete="off" placeholder="someone"></div>
+    <div class="row"><button class="b" id="hideBtn" type="button" aria-pressed="false">hide my profile</button></div>
+    <p class="note" id="hideNote"></p>
+    <div class="sec" id="acct"></div>
+    <div class="sec">
+      <div class="row"><button class="b" id="samplesBtn" type="button" aria-pressed="true">show sample nebulae</button></div>
+      <p class="note">the sample nebulae are seeded voices, there so the sky isn't empty.</p>
+    </div>
+    <div class="row"><button class="b" id="youClose" type="button">close</button></div>
+  </div>
+</dialog>
+
+<dialog id="found" aria-labelledby="foundTitle">
+  <form id="foundForm" novalidate>
+    <h2 id="foundTitle">found a nebula</h2>
+    <div class="field"><label for="fName">name</label><input type="text" id="fName" maxlength="40" autocomplete="off" placeholder="what gathers here"></div>
+    <div class="field"><label for="fQ">guiding question</label><input type="text" id="fQ" maxlength="90" autocomplete="off" placeholder="the question people keep circling"></div>
+    <div class="field"><span class="lab">the two ends of its spectrum</span>
+      <div class="two">
+        <input type="text" id="fL" maxlength="18" autocomplete="off" placeholder="one end" aria-label="left end of the spectrum">
+        <input type="text" id="fR" maxlength="18" autocomplete="off" placeholder="the other" aria-label="right end of the spectrum">
+      </div>
+      <p class="note" id="fNote"></p>
+    </div>
+    <div class="row">
+      <button class="b solid" type="submit" id="fSave">found it</button>
+      <button class="b" type="button" id="fCancel">cancel</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+(() => {
+'use strict';
+/* ───────── core: seeds, text, matching (no DOM) ───────── */
+const DAY = 864e5;
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+const ease = t => (t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+const easeOut = t => 1 - Math.pow(1 - t, 3);
+function hash(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } h ^= h >>> 16; h = Math.imul(h, 0x85ebca6b); h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35); h ^= h >>> 16; return h >>> 0; }
+const rnd = s => hash(s) / 4294967296;
+
+const SEED_CLUSTERS = [
+  { id: 'self', name: 'the performed self', q: 'who are you when no one is counting?', poles: ['curated', 'unguarded'], x: -700, y: -330, px: -300, py: -1010,
+    terms: 'online profile post posting posted authentic authenticity fake perform performing performance persona curate curated feed instagram social media followers audience selfie caption brand image mask honest genuine watched private privacy public internet digital filter account share sharing identity self selves pretend pretending' },
+  { id: 'enough', name: 'enough', q: 'how would you know you had enough?', poles: ['reach', 'rest'], x: -860, y: 150, px: -300, py: -530,
+    terms: 'ambition ambitious career success successful goal goals enough content contentment rest resting hustle work working job jobs achieve achievement striving strive promotion money salary burnout tired productivity productive lazy driven settle satisfied grind potential purpose finish win winning comparing compare behind ahead happy happiness comfortable stuck settling next' },
+  { id: 'made', name: 'who a made thing belongs to', q: 'when does a made thing stop being yours?', poles: ["the maker's", "everyone's"], x: 430, y: -560, px: 300, py: -310,
+    terms: 'art artist artists ownership owner owned owns copyright credit steal stolen stealing borrow borrowed original originality copy copied painting paint song songs music draw drawing drew creator maker fan fanart style sell sold license remix sample mural plagiarism royalties character comic comics design gallery' },
+  { id: 'city', name: 'living among strangers', q: 'what do we owe the people we pass every day?', poles: ['closeness', 'distance'], x: 640, y: 400, px: 300, py: 1010,
+    terms: 'city cities urban neighbour neighbor neighbours neighbors neighbourhood neighborhood subway transit street streets apartment rent stranger strangers crowd crowded noise downtown anonymous anonymity commute building landlord park store sidewalk town hometown toronto bus streetcar condo density roommate block corner' },
+  { id: 'machine', name: 'machine hands', q: 'if a machine can make it, what was the making for?', poles: ['instrument', 'author'], x: -170, y: -620, px: 300, py: -790,
+    terms: 'ai machine machines model models algorithm generate generated generative prompt prompting chatgpt robot automation automated creativity creative tool tools computer software human craft skill training trained data artificial intelligence llm output camera sketch replace replaced' },
+  { id: 'friends', name: 'the long quiet between friends', q: 'is a friendship something you keep, or something that keeps?', poles: ['tending', 'drifting'], x: 90, y: 640, px: -300, py: 790,
+    terms: 'friend friends friendship friendships adult adulthood text texting texted call called reach drift drifted drifting group chat hang hangout calendar busy lonely loneliness wedding moved kids thirty twenties catch touch connection birthday reunion roommates bestfriend' },
+  { id: 'doubt', name: 'holding without knowing', q: 'what do you hold without being sure?', poles: ['trust', 'doubt'], x: -480, y: 520, px: -300, py: 310,
+    terms: 'belief beliefs believe believed believing faith doubt doubts god religion religious pray prayer praying church certain certainty trust truth science meaning spiritual soul atheist agnostic universe death afterlife question answer unsure hymn hymns temple mosque ritual' },
+  { id: 'hours', name: 'empty hours', q: 'what happens in you when nothing is happening?', poles: ['filled', 'empty'], x: 790, y: -140, px: 300, py: 530,
+    terms: 'attention bored boring boredom phone scroll scrolling focus focused distract distraction distracted screen screens notification notifications read reading quiet silence stimulation idle wait waiting mind wander daydream concentrate dopamine apps tiktok empty nothing restless' },
+];
+
+// [cluster, text, stance −1..1, settledness 0..1, index of the thought it replies to]
+const SEED_THOUGHTS = [
+  ['self', 'i deleted a caption three times yesterday because it sounded like me trying to sound like me.', .1, .35],
+  ['self', "every profile is a small museum of who we wanted to be that year. i don't think that's dishonest. museums are edited too.", -.62, .82],
+  ['self', 'a museum has a curator who admits it. feeds pretend nobody chose anything.', .3, .5, 1],
+  ['self', 'the most honest thing i ever posted was a typo i left in.', .72, .3],
+  ['self', "i'm not sure “authentic” means anything once you know you're being watched. even alone, i narrate.", -.2, .62],
+  ['self', "being private used to be the default and now it reads as a statement. i just don't have anything to announce.", .5, .7],
+  ['self', 'the narrating voice might just be thinking, though. it was there before the audience was.', 0, .4, 4],
+  ['self', "my friend is funnier in the group chat than in person and i can't decide which one is the real her. maybe both. maybe the chat one just had time.", -.4, .45],
+
+  ['enough', "i keep moving the finish line and then being surprised that i'm tired.", .3, .55],
+  ['enough', "contentment feels like a thing i'm supposed to earn first. which is probably the whole problem.", .5, .7],
+  ['enough', "people say you can rest when it's done, but i've never met the “it” that gets done.", .62, .4],
+  ['enough', "i don't trust my own calm. half the time it's avoidance wearing a nicer coat.", -.5, .6],
+  ['enough', 'and half the time ambition is anxiety with a business plan. hard to tell them apart from the inside.', .08, .5, 11],
+  ['enough', "my dad worked one job for thirty years and seemed fine. i've had five and a personal brand. unclear who won.", .2, .76],
+  ['enough', "wanting more isn't greed if what you want more of is skill. i think. i'd like that to be true.", -.7, .35],
+  ['enough', "some days enough is a number. some days it's whether i ate lunch sitting down.", .4, .3],
+
+  ['made', "once a song has been played at someone's wedding it isn't really the songwriter's anymore.", .7, .8],
+  ['made', 'i drew a character at fourteen and she still feels like mine in a way no contract could describe.', -.8, .6],
+  ['made', "it's still the songwriter's rent, though. meaning can be shared. the invoice can't.", -.4, .55, 16],
+  ['made', 'fan art is the sincerest form of trespassing.', .2, .4],
+  ['made', 'credit matters more to me than control. use it, change it, just say where it came from.', .32, .72],
+  ['made', 'every style is borrowed. the question is whether you borrowed from the dead or from someone still paying rent.', -.1, .5],
+  ['made', 'i sold a painting and felt robbed, which makes no sense. i set the price.', -.52, .3],
+  ['made', 'a mural that gets tagged over: is that vandalism, or the city replying?', .5, .36],
+
+  ['city', "i've lived under the same neighbour for four years and know her only by her footsteps. it's a kind of intimacy.", .3, .7],
+  ['city', "the subway is the only place i'm pressed against people i'll never speak to. i find it weirdly restful.", .62, .6],
+  ['city', 'a city is a machine for not being lonely, and mostly it makes loneliness in bulk.', .1, .5],
+  ['city', 'bulk loneliness is at least shared. in my hometown i was lonely by myself.', -.2, .45, 26],
+  ['city', "the guy at the corner store knows my order. that's the entire reason i haven't moved.", -.72, .8],
+  ['city', "anonymity is what i came here for. now i'd pay extra rent for someone to notice when i'm gone a week.", -.5, .55],
+  ['city', "everyone complains about the noise, but the silence at my parents' house keeps me awake.", .2, .3],
+  ['city', 'the places you could sit for free keep closing. the ones left charge nine dollars to stay.', -.3, .6],
+
+  ['machine', "i used a model to finish a sketch and felt like i'd asked someone else to chew my food.", -.6, .6],
+  ['machine', "the camera didn't kill painting. it told painting what it was for. maybe this does the same for drawing.", -.5, .8],
+  ['machine', "the camera didn't learn from every painting ever made without asking, though.", .1, .5, 33],
+  ['machine', "what i'd miss isn't the output. it's being bad at something for a long time.", -.2, .7],
+  ['machine', "some of what it makes moves me, and i don't know where to put that.", .6, .35],
+  ['machine', 'if nobody meant it, can it mean anything? then again i find meaning in clouds.', .4, .5],
+  ['machine', 'prompting feels like commissioning, not making. which is fine. patrons are part of art history too.', .3, .55],
+  ['machine', "my students ask why they should learn to draw hands. i say: so you know when they're wrong. i'm not sure that's enough of a reason.", -.4, .4],
+
+  ['friends', 'we used to talk every day and now we send each other videos. i think it still counts. i think.', .3, .5],
+  ['friends', 'nobody tells you that after thirty, friendship is mostly logistics.', -.4, .75],
+  ['friends', 'the logistics are the love, though. someone checked three calendars to see you.', -.7, .6, 41],
+  ['friends', "i have friends i'd take a bullet for and haven't called in a year.", .6, .65],
+  ['friends', 'making a new friend as an adult is dating without the script. who texts first. how soon is too soon.', -.2, .4],
+  ['friends', "some friendships were really just proximity, and that's okay. the proximity was real.", .7, .8],
+  ['friends', "i'm the one who always reaches out. i can't tell if that makes me the good friend or the only one who needs it.", -.5, .35],
+  ['friends', 'my oldest friend and i have nothing in common anymore except each other.', .1, .55],
+
+  ['doubt', 'i stopped believing years ago but i still hum the hymns while doing dishes. something stayed.', .2, .7],
+  ['doubt', "doubt isn't the opposite of faith. certainty is.", -.1, .85],
+  ['doubt', "nice line, but most believers i know aren't certain. they just keep showing up.", -.5, .5, 49],
+  ['doubt', 'i envy people who can pray. not what they believe. just that they have somewhere to send it.', -.3, .6],
+  ['doubt', "i trust science the way i trust a bridge. i didn't check the math. i watch other people cross.", -.42, .55],
+  ['doubt', "every time i'm sure about something i try to remember how sure i was at nineteen.", .7, .65],
+  ['doubt', 'my grandmother believed everything and it made her kind. my uncle doubts everything and it made him tired.', -.6, .4],
+  ['doubt', "maybe i don't need an answer about god. maybe i need a better question.", .3, .3],
+
+  ['hours', "i can't remember the last time i was bored for a full ten minutes. my best ideas used to live there.", .6, .7],
+  ['hours', "my phone isn't the problem. it's whatever i'm avoiding when i pick it up.", .2, .8],
+  ['hours', "sure, but it's very convenient that the avoiding machine is always in my pocket.", .5, .5, 57],
+  ['hours', "waiting rooms used to be where you met your own mind. now nobody's in the room.", .7, .55],
+  ['hours', 'i read forty pages on the train today and it felt like getting away with something.', .4, .35],
+  ['hours', 'boredom is overrated by people who have never worked a nine-hour retail shift.', -.7, .6],
+  ['hours', "i don't want less stimulation, i want better stimulation. a good film fills me. scrolling just occupies me.", -.5, .65],
+  ['hours', 'attention is the only thing i own that everyone is bidding on.', .1, .45],
+];
+
+const SEED_PROPOSALS = [
+  { id: 'p-city', c: 'city', name: 'strangers, nearby', lean: .58 },
+  { id: 'p-machine', c: 'machine', name: 'the borrowed hand', lean: .34 },
+];
+
+/* ---------- text ---------- */
+const STOP = new Set((
+  "a about above across after again against ago all almost alone along already also although always am among an and another any anymore anyone anything are aren't around as at away back be became because become been before being below between both but by came can can't cannot come comes could couldn't did didn't do does doesn't doing don't done down during each either else even ever every everyone everything few for from further gave get gets getting give go goes going gone got had hadn't half has hasn't have haven't having he he's her here hers herself him himself his how however i i'd i'll i'm i've if in into is isn't it it's its itself just keep keeps kept kind know knows last least less let let's like little lot lots made make makes making many may maybe me mean means might mine more most mostly much must my myself need needs never new next no nobody nor not now of off often oh ok okay old on once one ones only onto or other others our ours ourselves out over own part people per perhaps probably put quite rather really right said same say says see seem seemed seems she she's should shouldn't since so some somehow someone something sometimes somewhere soon still stuff such sure take taken tell than that that's the their theirs them themselves then there there's these they they're thing things think thinking this those though thought three through time times to today together too took toward towards try trying two under until up upon us use used very want wanted wanting wants was wasn't way ways we we're well went were weren't what what's whatever when where whether which while who whole whom whose why will with within without won't would wouldn't year years yes yesterday yet you you're your yours yourself feel feels feeling felt day days lately actually basically honestly literally thing im ive dont cant"
+).split(/\s+/));
+
+function stem(w) {
+  if (w.length > 5 && w.endsWith('ies')) return w.slice(0, -3) + 'y';
+  if (w.length > 6 && w.endsWith('ness')) w = w.slice(0, -4);
+  let cut = false;
+  if (w.length > 5 && w.endsWith('ing')) { w = w.slice(0, -3); cut = true; }
+  else if (w.length > 4 && w.endsWith('ed')) { w = w.slice(0, -2); cut = true; }
+  else if (w.length > 3 && w.endsWith('s') && !/(ss|us|is)$/.test(w)) w = w.slice(0, -1);
+  if (cut && w.length > 3 && w[w.length - 1] === w[w.length - 2] && !/[lsfz]$/.test(w)) w = w.slice(0, -1);
+  if (w.length > 4 && w.endsWith('e')) w = w.slice(0, -1);
+  return w;
+}
+
+// → Map stem → {n: count, raw: first surface form}
+function terms(text) {
+  const out = new Map();
+  const words = String(text).toLowerCase().replace(/[’‘]/g, "'").match(/[a-z][a-z']*/g) || [];
+  for (let w of words) {
+    w = w.replace(/^'+|'+$/g, '');
+    if (STOP.has(w)) continue;
+    w = w.replace(/'s$/, '').replace(/'/g, '');
+    if (w.length < 3 && w !== 'ai') continue;
+    if (STOP.has(w)) continue;
+    const s = stem(w);
+    const e = out.get(s);
+    if (e) e.n++; else out.set(s, { n: 1, raw: w });
+  }
+  return out;
+}
+
+const MATCH_FLOOR = 0.14;
+
+// clusters: iterable of {terms: Map stem→weight}
+function rankClusters(tf, clusters) {
+  const list = [...clusters];
+  const N = Math.max(1, list.length);
+  const idf = s => { let df = 0; for (const c of list) if (c.terms.has(s)) df++; return Math.log(1 + N / Math.max(1, df)); };
+  const w = new Map(); let den = 0;
+  for (const [s, e] of tf) { const v = e.n * idf(s); w.set(s, v); den += v; }
+  const ranked = list.map(c => {
+    let num = 0, strong = false;
+    for (const [s, v] of w) { const cw = c.terms.get(s); if (cw) { num += v * Math.min(1, cw / 3); if (cw >= 3) strong = true; } }
+    const score = den ? num / den : 0;
+    // a match needs one of the cluster's defining words, or a lot of shared vocabulary
+    return { c, score, ok: (strong && score >= MATCH_FLOOR) || score >= 0.3 };
+  }).sort((a, b) => b.score - a.score);
+  const top = [...w.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([s]) => tf.get(s).raw);
+  return { ranked, keywords: top };
+}
+
+const CRISIS = /\b(kill(ing)?\s+myself|suicid\w*|end(ing)?\s+(my\s+life|it\s+all)|take\s+my\s+(own\s+)?life|(want|wanna|wish|ready)\s+(to\s+)?(die|be\s+dead)|wish\s+i\s+(was|were)\s+dead|don'?t\s+want\s+to\s+(be\s+alive|live|exist|be\s+here)(\s+anymore)?|self[\s-]?harm\w*|(hurt|hurting|cut|cutting|harm|harming)\s+myself|no\s+reason\s+to\s+(live|go\s+on)|better\s+off\s+(without\s+me|dead)|not\s+worth\s+living|can'?t\s+go\s+on|overdos\w*)\b/i;
+const isCrisis = text => CRISIS.test(String(text).replace(/[’‘]/g, "'"));
+
+const SIDE_WORDS = /^(for|against|pro|anti|con|yes|no|agree|disagree|right|wrong|good|bad)$/i;
+
+/* ───────── ui: one engine, three scales ───────── */
+const TAU = Math.PI * 2;
+const $ = s => document.querySelector(s);
+const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const MS = reduced ? .3 : 1;
+const FONT = "'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace";
+const body = document.body, canvas = $('#sky'), ctx = canvas.getContext('2d');
+const panel = $('#panel'), landing = $('#landing'), mind = $('#mind'), goBtn = $('#go'), care = $('#care');
+const captionEl = $('#caption'), tip = $('#tip'), live = $('#live'), menu = $('#menu'), readout = $('#readout');
+
+function el(tag, props, ...kids) {
+  const n = document.createElement(tag);
+  if (props) for (const k in props) {
+    const v = props[k];
+    if (v == null || v === false) continue;
+    if (k === 'class') n.className = v;
+    else if (k === 'style') n.style.cssText = v;
+    else if (k.startsWith('on')) n.addEventListener(k.slice(2), v);
+    else n.setAttribute(k, v === true ? '' : v);
+  }
+  for (const kid of kids.flat()) { if (kid == null || kid === false) continue; n.append(kid.nodeType ? kid : document.createTextNode(kid)); }
+  return n;
+}
+const btn = (label, onclick, cls) => el('button', { class: cls || 'b', type: 'button', onclick }, label);
+const uid = p => p + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36);
+const snip = (s, n) => { s = String(s).replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1).trimEnd() + '…' : s; };
+function ago(ts) {
+  const m = (Date.now() - ts) / 6e4;
+  if (m < 1.5) return 'just now';
+  if (m < 60) return Math.round(m) + ' min ago';
+  const h = Math.round(m / 60); if (h < 24) return h + (h === 1 ? ' hour ago' : ' hours ago');
+  const d = Math.round(m / 1440); if (d < 14) return d + (d === 1 ? ' day ago' : ' days ago');
+  if (d < 60) return Math.round(d / 7) + ' weeks ago';
+  return Math.round(d / 30) + ' months ago';
+}
+
+/* ---------- storage ---------- */
+const KEY = 'grayzone.v2';
+const blank = () => ({ v: 2, first: Date.now(), profile: { alias: '', hidden: false, samples: true },
+  galaxy: { clusters: [], thoughts: [] },
+  rooms: { clusters: [], thoughts: [], joined: {}, resonated: {}, votes: {}, proposals: [] },
+  sky: { sources: {}, group: 'theme', saved: [] } });
+let store = blank(), storageOK = true, legacy = null;
+try {
+  const raw = localStorage.getItem(KEY), old = raw ? null : localStorage.getItem('grayzone.v1');
+  localStorage.setItem(KEY + '.probe', '1'); localStorage.removeItem(KEY + '.probe');
+  try {
+    if (raw) {
+      const d = JSON.parse(raw);
+      if (d && d.v === 2) { for (const k of ['profile', 'galaxy', 'rooms', 'sky']) if (d[k] && typeof d[k] === 'object') Object.assign(store[k], d[k]); if (typeof d.first === 'number') store.first = d.first; }
+    } else if (old) { const d = JSON.parse(old); if (d && Array.isArray(d.thoughts)) { legacy = d; if (typeof d.first === 'number') store.first = d.first; } }
+  } catch (e) { /* unreadable save: start clean */ }
+} catch (e) { storageOK = false; }
+{ const A = (o, k) => { if (!Array.isArray(o[k])) o[k] = []; }, O = (o, k) => { if (!o[k] || typeof o[k] !== 'object' || Array.isArray(o[k])) o[k] = {}; };
+  A(store.galaxy, 'clusters'); A(store.galaxy, 'thoughts'); A(store.rooms, 'clusters'); A(store.rooms, 'thoughts'); A(store.rooms, 'proposals'); A(store.sky, 'saved');
+  O(store.rooms, 'joined'); O(store.rooms, 'resonated'); O(store.rooms, 'votes'); O(store.sky, 'sources'); }
+function save() {
+  if (!storageOK) return;
+  try { localStorage.setItem(KEY, JSON.stringify(store)); }
+  catch (e) { storageOK = false; $('#storeNote').hidden = false; say("couldn't save. this visit won't be remembered."); }
+}
+if (!storageOK) $('#storeNote').hidden = false;
+
+/* ---------- model: three spaces share one shape ---------- */
+const mkSpace = () => ({ clusters: new Map(), thoughts: [], byId: new Map() });
+const spaces = { galaxy: mkSpace(), nebulae: mkSpace(), sky: mkSpace() };
+let space = 'galaxy', clusters = spaces.galaxy.clusters, thoughts = spaces.galaxy.thoughts, byId = spaces.galaxy.byId;
+function setSpace(n) { space = n; ({ clusters, thoughts, byId } = spaces[n]); }
+function inSpace(n, fn) { const p = space; if (p === n) return fn(); setSpace(n); try { return fn(); } finally { setSpace(p); } }
+const portrait = window.innerHeight > window.innerWidth * 1.1;   // tall screens get a two-column sky
+const SLOTS = SEED_CLUSTERS.map(d => (portrait ? { x: d.px, y: d.py } : { x: d.x, y: d.y }));
+const validPoles = p => (Array.isArray(p) && p.length === 2 && p.every(s => typeof s === 'string' && s.trim()) ? p.map(s => s.trim().slice(0, 18)) : null);
+
+function cname(c) {
+  if (c.name) return c.name;
+  if (c.kind !== 'galaxy') return 'unnamed nebula';
+  const w = (c.words || '').split(/\s+/).filter(Boolean).slice(0, 2);
+  return w.length ? w.join(' · ') : 'unnamed';
+}
+function rebuildTerms(c) {
+  c.terms = new Map();
+  for (const [s] of terms([c.words || '', c.name || '', c.q || ''].join(' '))) c.terms.set(s, 3);
+  for (const t of thoughts) if (t.c === c.id) learn(t);
+}
+function addCluster(d) {
+  const c = { id: d.id, kind: d.kind, name: d.name ? String(d.name).slice(0, 40) : null, q: d.q ? String(d.q).slice(0, 90) : '',
+    poles: validPoles(d.poles) || (d.kind === 'room' ? ['this', 'that'] : null), x: +d.x || 0, y: +d.y || 0, r: 160, n: 0,
+    founder: d.founder || null, words: d.terms || '', terms: new Map(), born: -1e7, demo: !!d.demo, remote: null, members: [], cloud: hash(String(d.id)) % 3 };
+  clusters.set(c.id, c); rebuildTerms(c); return c;
+}
+function learn(t) {
+  const c = clusters.get(t.c); if (!c || t.kind === 'result') return;
+  for (const [s] of terms(t.text)) { const w = c.terms.get(s) || 0; if (w < 1.5) c.terms.set(s, Math.min(1.5, w + .5)); }
+}
+function addThought(d) {
+  const t = { id: d.id, c: d.c, kind: d.kind, text: String(d.text || ''), note: d.note ? String(d.note) : '', url: d.url || '', src: d.src || '', meta: d.meta || '', snippet: d.snippet || '',
+    stance: clamp(+d.stance || 0, -1, 1), spread: rnd(d.id + 'sp') * 1.7 - .85, settled: clamp(+d.settled || .2, .1, 1),
+    created: +d.created || Date.now(), touched: +d.touched || Date.now(), mine: !!d.mine, alias: d.alias || '', re: d.re || null,
+    links: Array.isArray(d.links) ? d.links.slice() : [], glow: d.glow || 0, refines: d.refines || 0,
+    oy: d.oy == null ? rnd(d.id + 'y') * 2 - 1 : d.oy, x: 0, y: 0, tx: 0, ty: 0, held: false,
+    twp: rnd(d.id + 'p') * TAU, tws: .4 + rnd(d.id + 's') * .9, pulse: -1e7 };
+  thoughts.push(t); byId.set(t.id, t); learn(t); return t;
+}
+function dropThought(t) {
+  const i = thoughts.indexOf(t); if (i >= 0) thoughts.splice(i, 1); byId.delete(t.id);
+  for (const o of thoughts) { if (o.re === t.id) o.re = null; if (o.links.includes(t.id)) o.links = o.links.filter(x => x !== t.id); }
+  if (sel === t) closePanel(); if (kb === t) kb = null; if (hover === t) hover = null; if (linkFrom === t) linkFrom = null;
+}
+function dropCluster(c) {
+  for (const t of members(c)) dropThought(t);
+  clusters.delete(c.id); if (selCluster === c) closePanel(); if (hoverC === c) hoverC = null;
+}
+const upsert = (list, o) => { const i = list.findIndex(x => x.id === o.id); if (i >= 0) list[i] = o; else list.push(o); };
+function persist(t) {
+  if (t.kind === 'result') return;
+  if (t.kind === 'own') { upsert(store.galaxy.thoughts, { id: t.id, c: t.c, text: t.text, note: t.note, url: t.url, src: t.src, stance: t.stance, settled: t.settled, created: t.created, touched: t.touched, refines: t.refines, oy: t.oy, links: t.links }); return save(); }
+  const c = spaces.nebulae.clusters.get(t.c);
+  if (c && c.remote) return cloudSetThought(c, t);
+  upsert(store.rooms.thoughts, { id: t.id, c: t.c, text: t.text, stance: t.stance, settled: t.settled, created: t.created, touched: t.touched, re: t.re, refines: t.refines, oy: t.oy }); save();
+}
+function saveCluster(c) {
+  const d = (c.kind === 'galaxy' ? store.galaxy.clusters : store.rooms.clusters).find(o => o.id === c.id);
+  if (d) Object.assign(d, { name: c.name, q: c.q, poles: c.poles }); save();
+}
+const members = c => thoughts.filter(t => t.c === c.id);
+const bright = (t, now) => (t.kind === 'result' ? t.settled : .1 + (t.settled - .1) * Math.pow(.5, Math.max(0, now - t.touched) / DAY / 40));
+const xOf = (t, c) => (c.poles ? t.stance : t.spread);
+
+function layout(c, snap) {
+  const m = members(c); c.n = m.length;
+  c.r = clamp(150 + m.length * 9, 160, 290);
+  const pts = m.map(t => ({ t, x: c.x + xOf(t, c) * c.r * .82 + (rnd(t.id + 'x') - .5) * 14, y: c.y + t.oy * c.r * .46 }));
+  for (let it = 0; it < 28; it++) for (let i = 0; i < pts.length; i++) for (let j = i + 1; j < pts.length; j++) {
+    const a = pts[i], b = pts[j], dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy);
+    if (d < 36) { const push = (36 - d) / 2, s = dy === 0 ? ((i + j) % 2 ? 1 : -1) : Math.sign(dy); a.y -= s * push; b.y += s * push; }
+  }
+  for (const p of pts) { p.t.tx = p.x; p.t.ty = clamp(p.y, c.y - c.r * .56, c.y + c.r * .56); if (snap) { p.t.x = p.t.tx; p.t.y = p.t.ty; } }
+}
+function pickOy(c, sx, near, self) {
+  const m = members(c).filter(t => t !== self), r = clamp(150 + (m.length + 1) * 9, 160, 290), x = c.x + sx * r * .82;
+  let best = 0, bs = -1e9;
+  for (let oy = -.9; oy <= .901; oy += .1) {
+    const y = c.y + oy * r * .46; let md = 110;
+    for (const t of m) md = Math.min(md, Math.hypot(t.tx - x, t.ty - y));
+    const s = md - (near == null ? Math.abs(oy) * 45 : Math.abs(oy - near) * 70);
+    if (s > bs) { bs = s; best = oy; }
+  }
+  return Math.round(best * 100) / 100;
+}
+function freeSpot() {
+  for (let R = 420; R < 6000; R += 140) {
+    const n = Math.max(10, Math.round(R / 70)), off = rnd('ring' + R) * TAU; let best = null, bd = 0;
+    for (let i = 0; i < n; i++) {
+      const a = off + i / n * TAU, x = Math.cos(a) * R * (portrait ? .7 : 1.15), y = Math.sin(a) * R * (portrait ? 1.3 : .85); let md = 1e9;
+      for (const c of clusters.values()) md = Math.min(md, Math.hypot(c.x - x, c.y - y));
+      if (md >= 560 && md > bd) { bd = md; best = { x: Math.round(x), y: Math.round(y) }; }
+    }
+    if (best) return best;
+  }
+  return { x: 0, y: -1600 };
+}
+function settleSaved(d) {   // a saved position can collide on a differently shaped screen
+  let near = !isFinite(d.x) || !isFinite(d.y) || Math.hypot(d.x, d.y) < 380;
+  for (const c of clusters.values()) if (Math.hypot(c.x - d.x, c.y - d.y) < 470) near = true;
+  if (near) Object.assign(d, freeSpot());
+}
+function newConstellation(tf, name) {   // call inside the galaxy
+  const p = freeSpot(), d = { id: uid('c'), name: name || null, q: '', poles: null, x: p.x, y: p.y, terms: tf ? [...tf.values()].map(e => e.raw).join(' ') : '' };
+  store.galaxy.clusters.push(d);
+  return addCluster(Object.assign({}, d, { kind: 'galaxy', founder: 'you' }));
+}
+function keepOwn(text, extra) {   // quietly file something in the galaxy
+  return inSpace('galaxy', () => {
+    const tf = terms(text), r = rankClusters(tf, clusters.values()), c = r.ranked[0] && r.ranked[0].ok ? r.ranked[0].c : newConstellation(tf), now = Date.now();
+    const t = addThought(Object.assign({ id: uid('u'), c: c.id, kind: 'own', text, stance: 0, settled: .2, created: now, touched: now, mine: true, oy: 0 }, extra));
+    t.oy = pickOy(c, xOf(t, c), null, t); layout(c, true); t.pulse = performance.now(); persist(t); return t;
+  });
+}
+
+// build the nebulae (sample rooms, then yours)
+setSpace('nebulae');
+if (store.profile.samples !== false) {
+  SEED_CLUSTERS.forEach((d, i) => addCluster(Object.assign({}, d, SLOTS[i], { kind: 'room', founder: 'seed', demo: true })));
+  SEED_THOUGHTS.forEach(([c, text, stance, settled, re], i) => {
+    const id = 's' + i, age = 2 + rnd(id + 'a') * 48, parent = re != null ? byId.get('s' + re) : null;
+    addThought({ id, c, kind: 'room', text, stance, settled, re: parent ? parent.id : null, glow: Math.pow(rnd(id + 'g'), 2) * .9,
+      created: store.first - age * DAY, touched: store.first - Math.min(age, rnd(id + 't') * 9) * DAY,
+      oy: parent ? clamp(parent.oy + (rnd(id + 'o') - .5) * .8, -1, 1) : null });
+  });
+}
+for (const d of store.rooms.clusters) { if (!d || !d.id || clusters.has(d.id)) continue; settleSaved(d); addCluster(Object.assign({}, d, { kind: 'room', founder: 'you' })); }
+for (const d of store.rooms.thoughts) if (d && d.id && clusters.has(d.c) && !byId.has(d.id) && typeof d.text === 'string') addThought(Object.assign({}, d, { kind: 'room', mine: true }));
+for (const t of thoughts) if (t.re && !byId.has(t.re)) t.re = null;
+for (const c of clusters.values()) layout(c, true);
+// and the galaxy
+setSpace('galaxy');
+for (const d of store.galaxy.clusters) { if (!d || !d.id || clusters.has(d.id)) continue; settleSaved(d); addCluster(Object.assign({}, d, { kind: 'galaxy', founder: 'you' })); }
+for (const d of store.galaxy.thoughts) if (d && d.id && clusters.has(d.c) && !byId.has(d.id) && typeof d.text === 'string') addThought(Object.assign({}, d, { kind: 'own', mine: true }));
+for (const c of clusters.values()) layout(c, true);
+const proposalsFor = c => (c.demo ? SEED_PROPOSALS : []).concat(store.rooms.proposals).filter(p => p.c === c.id);
+
+/* ---------- view state ---------- */
+let W = 0, H = 0, dpr = 1, wide = true;
+let mode = 'landing', visited = false, composeTarget = null;
+let sel = null, selCluster = null, hover = null, hoverC = null, kb = null, panelOpen = false, drift = null, linkFrom = null;
+let mapA = 0, mapAT = 0, mapRate = 2.4, flyToken = 0, spaceToken = 0;
+const cam = { x: 0, y: 0, z: 1 }, goal = { x: 0, y: 0, z: 1 }, vc = { x: 0, y: 0 }, vcT = { x: 0, y: 0 };
+const ZMIN = .09, ZMAX = 4;
+const X = wx => (wx - cam.x) * cam.z + vc.x, Y = wy => (wy - cam.y) * cam.z + vc.y;
+function setMode(m) { mode = m; body.dataset.mode = m; if (m !== 'map') { hover = hoverC = null; canvas.classList.remove('point'); } }
+function syncNav() {
+  body.dataset.space = space;
+  for (const b of document.querySelectorAll('.scales button')) b.setAttribute('aria-pressed', String(b.dataset.space === space));
+  $('#menuBtn').textContent = wide ? { galaxy: 'constellations', nebulae: 'nebulae', sky: 'searches' }[space] : 'list';
+}
+
+function viewSize() {
+  return { w: W - (panelOpen && wide ? Math.min(384, W) : 0), h: H - (panelOpen && !wide ? Math.min(panel.offsetHeight, H * .62) : 0) };
+}
+function setViewCenter() { const v = viewSize(); vcT.x = v.w / 2; vcT.y = v.h / 2; }
+const landingCam = () => ({ x: 0, y: 0, z: clamp(Math.min(W, H) / 760, .55, 1.25) });
+function fitAll() {
+  let x0 = -260, x1 = 260, y0 = -220, y1 = 220;
+  for (const c of clusters.values()) { x0 = Math.min(x0, c.x - c.r - 50); x1 = Math.max(x1, c.x + c.r + 50); y0 = Math.min(y0, c.y - c.r * .62 - 80); y1 = Math.max(y1, c.y + c.r * .62 + 60); }
+  const v = viewSize(), top = space === 'sky' ? (wide ? 60 : 130) : 0;   // the sky keeps room for its search bar
+  const z = clamp(Math.min((v.w - 40) / (x1 - x0), (v.h - (wide ? 140 : 200) - top) / (y1 - y0)), ZMIN, 1.2);
+  return { x: (x0 + x1) / 2, y: (y0 + y1) / 2 - top / 2 / z, z };
+}
+function fitCluster(c) {
+  const v = viewSize();
+  return clamp(Math.min((v.w - (wide ? 220 : 36)) / (c.r * 2.26), (v.h - (wide ? 250 : 190)) / (c.r * 1.24 + 60)), .4, 1.6);
+}
+function resize() {
+  dpr = Math.min(2, window.devicePixelRatio || 1);
+  W = window.innerWidth; H = window.innerHeight; wide = W > 720;
+  canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+  body.classList.toggle('sheet', panelOpen && !wide);
+  setViewCenter(); syncNav();
+  if (mode === 'landing' || mode === 'compose') { const l = landingCam(); flyToken++; Object.assign(cam, l); Object.assign(goal, l); vc.x = vcT.x; vc.y = vcT.y; }
+}
+
+/* ---------- tweens ---------- */
+const tweens = [];
+function tween(ms, fn) { return new Promise(res => tweens.push({ t0: -1, ms: Math.max(1, ms * MS), fn, res })); }
+const wait = ms => tween(ms, null);
+function runTweens(ts) {
+  for (let i = tweens.length - 1; i >= 0; i--) {
+    const w = tweens[i]; if (!w) continue; if (w.t0 < 0) w.t0 = ts;
+    const k = clamp((ts - w.t0) / w.ms, 0, 1);
+    if (w.fn) w.fn(k);
+    if (k >= 1) { tweens.splice(tweens.indexOf(w), 1); w.res(); }
+  }
+}
+function flyTo(x, y, z, ms = 1400) {
+  const id = ++flyToken, s = { x: cam.x, y: cam.y, z: cam.z }, l0 = Math.log(s.z), l1 = Math.log(clamp(z, ZMIN, ZMAX));
+  return tween(ms, k => {
+    if (id !== flyToken) return;
+    const e = ease(k);
+    cam.x = goal.x = lerp(s.x, x, e); cam.y = goal.y = lerp(s.y, y, e); cam.z = goal.z = Math.exp(lerp(l0, l1, e));
+  });
+}
+function zoomAt(sx, sy, z, now) {
+  z = clamp(z, ZMIN, ZMAX);
+  const wx = (sx - vc.x) / goal.z + goal.x, wy = (sy - vc.y) / goal.z + goal.y;
+  goal.z = z; goal.x = wx - (sx - vc.x) / z; goal.y = wy - (sy - vc.y) / z;
+  if (now) { cam.x = goal.x; cam.y = goal.y; cam.z = goal.z; }
+}
+const zoomBy = f => { flyToken++; zoomAt(vc.x, vc.y, goal.z * f); };
+const showAll = ms => { const f = fitAll(); return flyTo(f.x, f.y, f.z, ms || 1400); };
+
+/* ---------- captions ---------- */
+let sayTimer = 0;
+function say(content, hold = 3400) {
+  clearTimeout(sayTimer);
+  captionEl.replaceChildren(...[].concat(content));
+  captionEl.classList.add('on');
+  if (hold) sayTimer = setTimeout(() => captionEl.classList.remove('on'), hold);
+}
+const hush = () => { clearTimeout(sayTimer); captionEl.classList.remove('on'); };
+
+/* ---------- moving between the three scales ---------- */
+const greeted = {};
+function greet() {
+  if (space === 'galaxy' && !thoughts.length) return say('your galaxy is empty. place a thought to begin.', 0);
+  if (space === 'sky' && !thoughts.length) { say('send a thought out and see what it touches.', 0); if (wide) setTimeout(() => { if (space === 'sky' && mode === 'map') $('#skyQ').focus({ preventScroll: true }); }, 600); return; }
+  if (greeted[space]) return; greeted[space] = 1;
+  say({ galaxy: 'your own sky. nothing leaves it unless you send it.', nebulae: 'small rooms. glance at one, join it, or found your own.', sky: 'what your thought touched. select a star to open it.' }[space], 6000);
+}
+async function goSpace(name) {
+  if (mode === 'drift') return;
+  const id = ++spaceToken; closeMenu(); linkFrom = null;
+  if (mode !== 'map') {
+    landing.classList.add('leaving'); landing.inert = true; setMode('map'); setSpace(name); syncNav();
+    mapRate = 2.4; mapAT = 1; showAll(visited ? 1400 : 2800);
+  } else {
+    if (name === space) { showAll(); return; }
+    closePanel(); hush(); mapRate = 9; mapAT = 0;
+    await wait(360); if (id !== spaceToken) return;
+    setSpace(name); syncNav();
+    const f = fitAll(); flyToken++; cam.x = goal.x = f.x; cam.y = goal.y = f.y; cam.z = goal.z = f.z * .8;
+    mapRate = 2.4; mapAT = 1; flyTo(f.x, f.y, f.z, 1500);
+  }
+  visited = true; canvas.focus({ preventScroll: true }); greet();
+}
+
+/* ---------- drawing ---------- */
+const glowSprite = document.createElement('canvas'); glowSprite.width = glowSprite.height = 128;
+{ const g = glowSprite.getContext('2d'), gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  gr.addColorStop(0, 'rgba(255,255,255,.9)'); gr.addColorStop(.16, 'rgba(255,255,255,.42)'); gr.addColorStop(.48, 'rgba(255,255,255,.1)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, 128, 128); }
+const gas = [0, 1, 2].map(k => {   // soft grey clouds for nebulae
+  const cv = document.createElement('canvas'); cv.width = cv.height = 256; const g = cv.getContext('2d');
+  for (let i = 0; i < 38; i++) {
+    const a = rnd('ga' + k + i) * TAU, d = Math.pow(rnd('gd' + k + i), .7) * 62, x = 128 + Math.cos(a) * d, y = 128 + Math.sin(a) * d * .8, r = 22 + rnd('gr' + k + i) * 40;
+    const gr = g.createRadialGradient(x, y, 0, x, y, r); gr.addColorStop(0, `rgba(255,255,255,${(.014 + rnd('gl' + k + i) * .022).toFixed(3)})`); gr.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = gr; g.fillRect(x - r, y - r, r * 2, r * 2);
+  }
+  return cv;
+});
+const dust = []; for (let i = 0; i < 260; i++) dust.push({ x: rnd('dx' + i), y: rnd('dy' + i), d: .25 + rnd('dd' + i) * .75, p: rnd('dp' + i) * TAU, s: rnd('ds' + i) });
+const labelBoxes = [];
+const ls = v => { if ('letterSpacing' in ctx) ctx.letterSpacing = v; };
+const white = a => `rgba(255,255,255,${clamp(a, 0, 1).toFixed(3)})`;
+const ink = a => `rgba(232,232,228,${clamp(a, 0, 1).toFixed(3)})`;
+const mid = a => `rgba(186,186,182,${clamp(a, 0, 1).toFixed(3)})`;
+function ellipse(x, y, rx, ry) { ctx.beginPath(); ctx.ellipse(x, y, Math.max(.1, rx), Math.max(.1, ry), 0, 0, TAU); ctx.stroke(); }
+const focusCluster = () => (sel ? clusters.get(sel.c) : selCluster);
+function clusterAlpha(c, ts) {
+  const born = ease(clamp((ts - c.born) / (2200 * MS), 0, 1)), f = focusCluster();
+  return born * (f && f !== c ? lerp(1, .4, clamp((cam.z - .7) / .5, 0, 1)) : 1);
+}
+
+function drawDust(ts) {
+  const t = ts * .001, n = wide ? dust.length : 140;
+  ctx.fillStyle = '#fff';
+  for (let i = 0; i < n; i++) {
+    const s = dust[i];
+    let x = (s.x * W + (reduced ? 0 : t * 2.4 * s.d) - cam.x * cam.z * .05 * s.d) % W; if (x < 0) x += W;
+    let y = (s.y * H - cam.y * cam.z * .05 * s.d) % H; if (y < 0) y += H;
+    ctx.globalAlpha = (.08 + .26 * s.d) * (.72 + .28 * Math.sin(t * (.3 + s.s) + s.p));
+    const z = s.d > .82 ? 1.5 : 1; ctx.fillRect(x, y, z, z);
+  }
+  ctx.globalAlpha = 1;
+}
+function drawOrigin(ts) {
+  const sx = X(0), sy = Y(0), a = lerp(.26, .07, mapA), t = reduced ? 0 : ts * .001;
+  ctx.lineWidth = 1;
+  [[150, [1, 7], 4], [290, [2, 12], -3], [430, [1, 18], 2]].forEach(([r, dash, sp], i) => {
+    ctx.strokeStyle = white(a * (1 - i * .2)); ctx.setLineDash(dash); ctx.lineDashOffset = t * sp;
+    ctx.beginPath(); ctx.arc(sx, sy, r * cam.z, 0, TAU); ctx.stroke();
+  });
+  ctx.setLineDash([]);
+  if (mapA > .3 && !drift) {
+    ctx.strokeStyle = white(.07 * mapA); ctx.beginPath(); ctx.arc(sx, sy, 58 * cam.z, 0, TAU); ctx.stroke();
+    ctx.strokeStyle = white(.22 * mapA); ctx.beginPath(); ctx.moveTo(sx - 5, sy + .5); ctx.lineTo(sx + 5, sy + .5); ctx.moveTo(sx + .5, sy - 5); ctx.lineTo(sx + .5, sy + 5); ctx.stroke();
+  }
+  if (space === 'sky' && mapA > .05 && clusters.size) {   // the thought sits at the centre; lines reach what it touched
+    for (const c of clusters.values()) { ctx.strokeStyle = white(.08 * mapA * clusterAlpha(c, ts)); ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(X(c.x), Y(c.y)); ctx.stroke(); }
+    if (sky.q) { ctx.font = `11px ${FONT}`; ls('.5px'); ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = mid(.85 * mapA); ctx.fillText('“' + snip(sky.q, 44) + '”', sx, sy + 24); ls('0px'); }
+  }
+}
+function drawGrid() {
+  let sp = 200; while (sp * cam.z < 46) sp *= 2;
+  const x0 = cam.x - vc.x / cam.z, x1 = cam.x + (W - vc.x) / cam.z, y0 = cam.y - vc.y / cam.z, y1 = cam.y + (H - vc.y) / cam.z;
+  ctx.strokeStyle = white(.03 * mapA); ctx.lineWidth = 1; ctx.beginPath();
+  for (let gx = Math.ceil(x0 / sp) * sp; gx <= x1; gx += sp) { const s = Math.round(X(gx)) + .5; ctx.moveTo(s, 0); ctx.lineTo(s, H); }
+  for (let gy = Math.ceil(y0 / sp) * sp; gy <= y1; gy += sp) { const s = Math.round(Y(gy)) + .5; ctx.moveTo(0, s); ctx.lineTo(W, s); }
+  ctx.stroke();
+}
+function drawClusters(ts) {
+  const t = reduced ? 0 : ts * .001, zk = clamp((cam.z - .62) / .3, 0, 1);
+  ctx.lineWidth = 1;
+  for (const c of clusters.values()) {
+    const a = clusterAlpha(c, ts) * mapA; if (a < .01) continue;
+    const sx = X(c.x), sy = Y(c.y), rx = c.r * cam.z, ry = c.r * .62 * cam.z;
+    if (sx + rx * 1.6 < 0 || sx - rx * 1.6 > W || sy + ry * 2 < 0 || sy - ry * 2 > H) continue;
+    const hot = hoverC === c || selCluster === c ? 1.6 : 1;
+    ctx.setLineDash([]);
+    if (c.kind === 'room') {   // gas: denser where more has been said
+      const dens = (.4 + .4 * Math.min(1, c.n / 9)) * lerp(1, .5, zk), br = 1 + .03 * Math.sin(t * .22 + c.cloud * 2);
+      ctx.globalAlpha = a * dens; ctx.drawImage(gas[c.cloud], sx - rx * 1.55 * br, sy - ry * 2 * br, rx * 3.1 * br, ry * 4 * br);
+      ctx.globalAlpha = a * dens * .8; ctx.drawImage(gas[(c.cloud + 1) % 3], sx - rx * 1.2, sy - ry * 1.5, rx * 2.4, ry * 3);
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = white(.06 * a * hot); ellipse(sx, sy, rx, ry);
+    } else if (c.kind === 'sky') { ctx.strokeStyle = white(.07 * a * hot); ellipse(sx, sy, rx, ry); }
+    else { ctx.strokeStyle = white(.045 * a * hot); ellipse(sx, sy, rx, ry); }
+    ctx.setLineDash([1, 8]); ctx.lineDashOffset = t * 3 * (hash(c.id) % 2 ? 1 : -1); ctx.strokeStyle = white(.15 * a); ellipse(sx, sy, rx * 1.13, ry * 1.17);
+    ctx.setLineDash([]);
+    if (c.poles && zk > 0) {   // the spectrum: a soft horizontal axis, grey middle marked
+      const g = ctx.createLinearGradient(sx - rx * .82, 0, sx + rx * .82, 0);
+      g.addColorStop(0, white(.2 * a * zk)); g.addColorStop(.5, white(.05 * a * zk)); g.addColorStop(1, white(.2 * a * zk));
+      ctx.strokeStyle = g; ctx.beginPath(); ctx.moveTo(sx - rx * .82, Math.round(sy) + .5); ctx.lineTo(sx + rx * .82, Math.round(sy) + .5); ctx.stroke();
+      ctx.strokeStyle = white(.22 * a * zk); ctx.beginPath(); ctx.moveTo(Math.round(sx) + .5, sy - 4); ctx.lineTo(Math.round(sx) + .5, sy + 4); ctx.stroke();
+    }
+  }
+}
+function drawThreads(ts) {
+  ctx.lineWidth = 1;
+  if (space === 'galaxy') for (const c of clusters.values()) {   // constellation lines, in the order thoughts arrived
+    const a = clusterAlpha(c, ts) * mapA; if (a < .01) continue;
+    const m = members(c).filter(t => !t.held).sort((p, q) => p.created - q.created); if (m.length < 2) continue;
+    ctx.strokeStyle = white(.12 * a); ctx.beginPath(); ctx.moveTo(X(m[0].x), Y(m[0].y));
+    for (let i = 1; i < m.length; i++) ctx.lineTo(X(m[i].x), Y(m[i].y)); ctx.stroke();
+  }
+  for (const t of thoughts) {
+    if (t.held || (!t.re && !t.links.length)) continue;
+    const ca = mapA * clusterAlpha(clusters.get(t.c), ts);
+    const line = (id, dash) => {
+      const p = byId.get(id); if (!p || p.held) return;
+      const hot = (sel && (sel === t || sel === p)) || (hover && (hover === t || hover === p));
+      ctx.setLineDash(dash); ctx.strokeStyle = white((hot ? .62 : dash.length ? .3 : .2) * ca);
+      ctx.beginPath(); ctx.moveTo(X(p.x), Y(p.y)); ctx.lineTo(X(t.x), Y(t.y)); ctx.stroke();
+    };
+    if (t.re) line(t.re, []);
+    for (const id of t.links) line(id, [3, 4]);
+  }
+  ctx.setLineDash([]);
+}
+function drawStars(ts) {
+  const now = Date.now(), t1 = reduced ? 0 : ts * .001, ss = clamp(.72 + cam.z * .5, .8, 2.1), res = store.rooms.resonated;
+  ctx.fillStyle = '#fff'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 1;
+  for (const t of thoughts) {
+    if (t.held) continue;
+    const sx = X(t.x), sy = Y(t.y); if (sx < -60 || sx > W + 60 || sy < -60 || sy > H + 60) continue;
+    const ca = clusterAlpha(clusters.get(t.c), ts) * mapA; if (ca < .01) continue;
+    const b = bright(t, now), tw = 1 + .14 * Math.sin(t1 * t.tws + t.twp);
+    const own = t.kind === 'own', g = t.glow + (!t.res && res[t.id] ? .45 : 0) + (own ? .16 : 0), r = ((own ? 1.3 : .9) + b * 1.8) * ss, R = (4 + b * 7 + g * 26) * ss;
+    if (t.src === 'launch') {   // a doorway out, drawn hollow
+      ctx.globalAlpha = .75 * ca; ctx.beginPath(); ctx.arc(sx, sy, 3.2 * ss, 0, TAU); ctx.stroke();
+    } else {
+      ctx.globalAlpha = clamp((.1 + .16 * b + .34 * g) * tw * ca, 0, 1);
+      ctx.drawImage(glowSprite, sx - R, sy - R, R * 2, R * 2);
+      ctx.globalAlpha = clamp(((own ? .46 : .24) + (own ? .54 : .76) * b) * tw * ca, 0, 1);
+      ctx.beginPath(); ctx.arc(sx, sy, r, 0, TAU); ctx.fill();
+    }
+    if (t.mine && t.kind === 'room') { ctx.globalAlpha = .5 * ca; ctx.beginPath(); ctx.arc(sx, sy, r + 4.5, 0, TAU); ctx.stroke(); }
+    const pk = (ts - t.pulse) / (1300 * MS);
+    if (pk >= 0 && pk < 1) { ctx.globalAlpha = (1 - pk) * .5 * ca; ctx.beginPath(); ctx.arc(sx, sy, r + 3 + easeOut(pk) * 34, 0, TAU); ctx.stroke(); }
+  }
+  ctx.globalAlpha = 1;
+  if (sel && !sel.held && byId.get(sel.id) === sel) {
+    const sx = X(sel.x), sy = Y(sel.y);
+    ctx.strokeStyle = white(.8 * mapA); ctx.setLineDash([3, 5]); ctx.lineDashOffset = -t1 * 6; ctx.beginPath(); ctx.arc(sx, sy, 13, 0, TAU); ctx.stroke(); ctx.setLineDash([]);
+    ctx.beginPath(); for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { ctx.moveTo(sx + dx * 18, sy + dy * 18); ctx.lineTo(sx + dx * 24, sy + dy * 24); } ctx.stroke();
+  }
+  const k = kb || hover;
+  if (k && k !== sel && !k.held) { ctx.strokeStyle = white(.55 * mapA); ctx.beginPath(); ctx.arc(X(k.x), Y(k.y), 10, 0, TAU); ctx.stroke(); }
+}
+function drawLabels(ts) {
+  labelBoxes.length = 0; ctx.textBaseline = 'middle';
+  const zk = clamp((cam.z - .62) / .3, 0, 1), f = focusCluster();
+  const order = [...clusters.values()].sort((a, b) => (b === f || b === hoverC) - (a === f || a === hoverC));
+  for (const c of order) {
+    const a = clusterAlpha(c, ts) * mapA; if (a < .02) continue;
+    const sx = X(c.x), sy = Y(c.y), rx = c.r * cam.z, ry = c.r * .62 * cam.z;
+    if (sx + rx < -260 || sx - rx > W + 260 || sy + ry < -80 || sy - ry > H + 80) continue;
+    const name = cname(c), fs = wide ? 12 : 11, sp = wide ? '1.1px' : '.5px';
+    ctx.font = `${fs}px ${FONT}`; ls(sp); const nw = ctx.measureText(name).width;
+    let qa = 0;
+    if (c.q && zk > 0) { ctx.font = `11px ${FONT}`; ls('.3px'); if (ctx.measureText(c.q).width < Math.min(W - 24, rx * 2.4 + 60)) qa = zk; }
+    const lx = sx > 0 && sx < W && nw < W - 20 ? clamp(sx, nw / 2 + 10, W - nw / 2 - 10) : sx;
+    const ny = sy - ry - 16 - qa * 18, box = { c, x0: lx - nw / 2 - 12, x1: lx + nw / 2 + 12, y0: ny - 13, y1: ny + 13 };
+    if (labelBoxes.some(o => o.x0 < box.x1 && o.x1 > box.x0 && o.y0 < box.y1 && o.y1 > box.y0)) continue;
+    labelBoxes.push(box);
+    const hot = hoverC === c || selCluster === c;
+    ctx.textAlign = 'center'; ctx.font = `${c.name ? '' : 'italic '}${fs}px ${FONT}`; ls(sp);
+    ctx.fillStyle = ink((c.name ? (hot ? 1 : .88) : (hot ? .9 : .66)) * a); ctx.fillText(name, lx, ny);
+    if (hot) { ctx.strokeStyle = ink(.5 * a); ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(lx - nw / 2, Math.round(ny + 10) + .5); ctx.lineTo(lx + nw / 2, Math.round(ny + 10) + .5); ctx.stroke(); }
+    if (qa > 0) { ctx.font = `11px ${FONT}`; ls('.3px'); ctx.fillStyle = mid(.85 * a * qa); ctx.fillText(c.q, sx, sy - ry - 15); }
+    if (c.poles && zk > 0) {
+      ctx.font = `11px ${FONT}`; ls('.9px'); ctx.fillStyle = mid(.9 * a * zk);
+      ctx.textAlign = 'left'; ctx.fillText(c.poles[0], sx - rx * .82, sy + ry + 17);
+      ctx.textAlign = 'right'; ctx.fillText(c.poles[1], sx + rx * .82, sy + ry + 17);
+    }
+  }
+  ls('0px');
+}
+function drawDrift(ts) {
+  if (!drift) return;
+  const { t, from, to } = drift, sx = X(t.x), sy = Y(t.y);
+  ctx.lineWidth = 1;
+  if (drift.line > 0 && drift.fade > 0) {
+    const ex = lerp(from.x, to.x, drift.line), ey = lerp(from.y, to.y, drift.line);
+    ctx.strokeStyle = white(.42 * drift.fade); ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(X(ex), Y(ey)); ctx.stroke();
+    ctx.strokeStyle = white(.14 * drift.fade); ctx.beginPath(); ctx.moveTo(X(from.x), Y(from.y)); ctx.lineTo(sx, sy); ctx.stroke();
+    if (drift.line >= 1) { ctx.strokeStyle = white(.5 * drift.fade * (1 - drift.k)); ctx.beginPath(); ctx.arc(X(to.x), Y(to.y), 5, 0, TAU); ctx.stroke(); }
+  }
+  const s = drift.spawn, breathe = reduced ? 1 : 1 + .1 * Math.sin(ts * .003);
+  if (s < 1) { ctx.strokeStyle = white((1 - s) * .5 * Math.min(1, s * 4)); ctx.beginPath(); ctx.arc(sx, sy, lerp(54, 5, s), 0, TAU); ctx.stroke(); }
+  const R = 20 * breathe;
+  ctx.globalAlpha = .5 * s; ctx.drawImage(glowSprite, sx - R, sy - R, R * 2, R * 2);
+  ctx.globalAlpha = .9 * s; ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(sx, sy, 2.1, 0, TAU); ctx.fill();
+  ctx.globalAlpha = 1;
+}
+
+const who = t => (t.mine ? 'you' : t.alias || 'someone');
+const tipSmall = t => (t.kind === 'result' ? (t.src === 'launch' ? 'opens in a new tab' : t.src) : cname(clusters.get(t.c)) + (t.mine && t.kind === 'room' ? ' · yours' : ''));
+let tipFor = null, frameN = 0, last = 0;
+function updateTip() {
+  const t = mode === 'map' && !drag ? (kb || hover) : null;
+  if (!t || t === sel) { if (tipFor) { tip.classList.remove('on'); tipFor = null; } return; }
+  if (tipFor !== t) { tipFor = t; tip.replaceChildren(snip(t.text, 120), el('small', null, tipSmall(t))); tip.classList.add('on'); }
+  const sx = X(t.x), sy = Y(t.y), w = tip.offsetWidth, h = tip.offsetHeight;
+  const x = clamp(sx + 18, 8, W - w - 8), y = sy + 18 + h > H - 8 ? sy - 18 - h : sy + 18;
+  tip.style.transform = `translate(${Math.round(x)}px,${Math.round(y)}px)`;
+}
+function frame(ts) {
+  const dt = Math.min(.05, (ts - last) / 1000 || .016); last = ts;
+  runTweens(ts);
+  const k = 1 - Math.exp(-dt * 13);
+  cam.x += (goal.x - cam.x) * k; cam.y += (goal.y - cam.y) * k; cam.z += (goal.z - cam.z) * k;
+  const kv = reduced ? 1 : 1 - Math.exp(-dt * 5);
+  vc.x += (vcT.x - vc.x) * kv; vc.y += (vcT.y - vc.y) * kv;
+  mapA += (mapAT - mapA) * (reduced ? 1 : 1 - Math.exp(-dt * mapRate));
+  const ks = reduced ? 1 : 1 - Math.exp(-dt * 3.2);
+  for (const t of thoughts) if (!t.held) { t.x += (t.tx - t.x) * ks; t.y += (t.ty - t.y) * ks; }
+
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#1f1f20'; ctx.fillRect(0, 0, W, H);
+  drawDust(ts); drawOrigin(ts);
+  if (mapA > .01) { drawGrid(); drawClusters(ts); drawThreads(ts); drawStars(ts); drawLabels(ts); }
+  drawDrift(ts);
+  updateTip();
+  if (++frameN % 6 === 0 && wide && mode === 'map') {
+    const f = v => (v < 0 ? '−' : ' ') + String(Math.abs(Math.round(v))).padStart(4, '0');
+    readout.textContent = `x${f(cam.x)} · y${f(-cam.y)} · z ${cam.z.toFixed(2)}`;
+  }
+  requestAnimationFrame(frame);
+}
+
+/* ---------- picking ---------- */
+function pick(sx, sy, rad) {
+  let best = null, bd = rad;
+  for (const t of thoughts) { if (t.held) continue; const d = Math.hypot(X(t.x) - sx, Y(t.y) - sy); if (d < bd) { bd = d; best = t; } }
+  return best;
+}
+const pickLabel = (sx, sy) => { const b = labelBoxes.find(b => sx >= b.x0 && sx <= b.x1 && sy >= b.y0 && sy <= b.y1); return b ? b.c : null; };
+function pickEllipse(sx, sy) {
+  for (const c of clusters.values()) { const dx = (sx - X(c.x)) / (c.r * cam.z), dy = (sy - Y(c.y)) / (c.r * .62 * cam.z); if (dx * dx + dy * dy <= 1.1) return c; }
+  return null;
+}
+
+/* ---------- pointer ---------- */
+const ptrs = new Map(); let drag = null, pinch = null;
+canvas.addEventListener('pointerdown', e => {
+  canvas.classList.remove('kb'); kb = null; closeMenu();
+  if (mode !== 'map') return;
+  ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
+  flyToken++;
+  if (ptrs.size === 1) drag = { sx: e.clientX, sy: e.clientY, moved: false, touch: e.pointerType === 'touch' };
+  else if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; pinch = { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, z: goal.z, mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 }; if (drag) drag.moved = true; }
+});
+canvas.addEventListener('pointermove', e => {
+  if (mode !== 'map') return;
+  const p = ptrs.get(e.pointerId);
+  if (!p) {
+    if (e.pointerType === 'touch') return;
+    hover = pick(e.clientX, e.clientY, 15); hoverC = hover ? null : pickLabel(e.clientX, e.clientY);
+    canvas.classList.toggle('point', !!(hover || hoverC)); return;
+  }
+  const dx = e.clientX - p.x, dy = e.clientY - p.y; p.x = e.clientX; p.y = e.clientY;
+  if (ptrs.size === 1 && drag) {
+    if (!drag.moved && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) > 5) { drag.moved = true; canvas.classList.add('dragging'); hover = null; }
+    if (drag.moved) { goal.x -= dx / cam.z; goal.y -= dy / cam.z; cam.x = goal.x; cam.y = goal.y; }
+  } else if (ptrs.size === 2 && pinch) {
+    const [a, b] = [...ptrs.values()], d = Math.hypot(a.x - b.x, a.y - b.y), mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    goal.x -= (mx - pinch.mx) / cam.z; goal.y -= (my - pinch.my) / cam.z; pinch.mx = mx; pinch.my = my;
+    zoomAt(mx, my, pinch.z * d / pinch.d, true);
+  }
+});
+function pointerEnd(e) {
+  if (!ptrs.delete(e.pointerId)) return;
+  if (ptrs.size === 0) {
+    canvas.classList.remove('dragging');
+    const d = drag; drag = pinch = null;
+    if (d && !d.moved && e.type === 'pointerup') click(e.clientX, e.clientY, d.touch);
+  } else { pinch = null; drag = { sx: 0, sy: 0, moved: true }; }
+}
+canvas.addEventListener('pointerup', pointerEnd);
+canvas.addEventListener('pointercancel', pointerEnd);
+canvas.addEventListener('pointerleave', () => { if (!ptrs.size) { hover = hoverC = null; canvas.classList.remove('point'); } });
+canvas.addEventListener('wheel', e => {
+  e.preventDefault(); if (mode !== 'map') return;
+  flyToken++;
+  const d = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+  zoomAt(e.clientX, e.clientY, goal.z * Math.exp(-clamp(d, -160, 160) * (e.ctrlKey ? .012 : .0022)));
+}, { passive: false });
+canvas.addEventListener('dblclick', e => { if (mode !== 'map' || pick(e.clientX, e.clientY, 16)) return; flyToken++; zoomAt(e.clientX, e.clientY, goal.z * 1.8); });
+function click(sx, sy, touch) {
+  const t = pick(sx, sy, touch ? 26 : 16);
+  if (t) return selectThought(t);
+  if (linkFrom) { linkFrom = null; return say('left unjoined.'); }
+  const c = pickLabel(sx, sy);
+  if (c) return openCluster(c);
+  const inside = pickEllipse(sx, sy);
+  if (inside && cam.z < fitCluster(inside) * .7) { if (panelOpen) closePanel(); return flyTo(inside.x, inside.y, fitCluster(inside), 1700); }
+  if (panelOpen) closePanel();
+}
+
+/* ---------- keyboard on the map ---------- */
+function ensureVisible(t) {
+  const v = viewSize(), sx = (t.tx - goal.x) * goal.z + vcT.x, sy = (t.ty - goal.y) * goal.z + vcT.y;
+  if (sx < 70 || sx > v.w - 70 || sy < 90 || sy > v.h - 90) { flyToken++; goal.x = t.tx; goal.y = t.ty; }
+}
+function kbMove(dx, dy) {
+  const from = kb || sel, fx = from ? from.x : cam.x, fy = from ? from.y : cam.y;
+  let best = null, bc = 1e12;
+  for (const t of thoughts) {
+    if (t === from) continue;
+    const vx = t.x - fx, vy = t.y - fy, along = vx * dx + vy * dy; if (from && along <= 3) continue;
+    const cost = from ? along + Math.abs(vx * dy - vy * dx) * 2.2 : Math.hypot(vx, vy);
+    if (cost < bc) { bc = cost; best = t; }
+  }
+  if (!best) return;
+  kb = best; ensureVisible(best);
+  live.textContent = `${cname(clusters.get(best.c))}. ${snip(best.text, 160)}`;
+}
+canvas.addEventListener('keydown', e => {
+  if (mode !== 'map' || e.metaKey || e.ctrlKey || e.altKey) return;
+  const dir = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+  if (dir) {
+    e.preventDefault(); canvas.classList.add('kb');
+    if (e.shiftKey) { flyToken++; goal.x += dir[0] * 90 / cam.z; goal.y += dir[1] * 90 / cam.z; } else kbMove(dir[0], dir[1]);
+  } else if ((e.key === 'Enter' || e.key === ' ') && kb) { e.preventDefault(); const t = kb; selectThought(t); panel.focus({ preventScroll: true }); }
+});
+document.addEventListener('keydown', e => {
+  const a = document.activeElement, typing = a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName);
+  if (document.querySelector('dialog[open]')) return;
+  if (e.key === 'Escape') {
+    if (!menu.hidden) { closeMenu(); $('#menuBtn').focus(); return; }
+    if (mode === 'compose') return leaveCompose();
+    if (linkFrom) { linkFrom = null; return say('left unjoined.'); }
+    if (typing && a.id === 'skyQ') return a.blur();
+    if (panelOpen && mode === 'map') { if (typing && panel.contains(a)) return a.blur(); return closePanel(true); }
+    return;
+  }
+  if (typing || e.metaKey || e.ctrlKey || e.altKey || mode !== 'map') return;
+  if (e.key === 'n') { e.preventDefault(); openCompose(); }
+  else if (e.key === '?') openAbout();
+  else if (e.key === '0') showAll();
+  else if (e.key === '1') goSpace('galaxy'); else if (e.key === '2') goSpace('nebulae'); else if (e.key === '3') goSpace('sky');
+  else if (e.key === '+' || e.key === '=') zoomBy(1.4);
+  else if (e.key === '-' || e.key === '_') zoomBy(1 / 1.4);
+});
+
+/* ---------- panel: shared pieces ---------- */
+function openPanel() {
+  panelOpen = true; panel.classList.add('open'); panel.setAttribute('aria-hidden', 'false');
+  body.classList.toggle('sheet', !wide); body.classList.add('panel'); setViewCenter();
+}
+function closePanel(focusBack) {
+  if (refineOrig) cancelRefine();
+  panelOpen = false; sel = null; selCluster = null;
+  panel.classList.remove('open'); panel.setAttribute('aria-hidden', 'true'); body.classList.remove('sheet', 'panel');
+  setViewCenter(); if (focusBack) canvas.focus({ preventScroll: true });
+}
+function setPanel(nodes, label, keep) {
+  const y = panel.scrollTop; panel.replaceChildren(...nodes); panel.setAttribute('aria-label', label); panel.scrollTop = keep ? y : 0;
+  requestAnimationFrame(setViewCenter);
+}
+function refreshPanel(force) {
+  if (!panelOpen) return;
+  if (!force && (refineOrig || panel.querySelector('textarea, input[type="text"], select'))) return;
+  if (sel) { if (byId.get(sel.id) === sel) renderThought(sel); else closePanel(); }
+  else if (selCluster) { if (clusters.get(selCluster.id) === selCluster) renderCluster(selCluster); else closePanel(); }
+}
+const closeBtn = () => el('button', { class: 'x', type: 'button', 'aria-label': 'close', onclick: () => closePanel(true) }, '×');
+const head = (left) => el('div', { class: 'p-head' }, left, closeBtn());
+const crumb = c => el('button', { class: 'crumb', type: 'button', onclick: () => openCluster(c) }, cname(c));
+function stanceWords(s, c) {
+  const a = Math.abs(s); if (a < .1) return 'sits in the grey middle';
+  return (a < .45 ? 'leans toward ' : a < .8 ? 'sits toward ' : 'sits close to ') + '“' + (s < 0 ? c.poles[0] : c.poles[1]) + '”';
+}
+function spectrumView(c, stance) {
+  return el('div', { class: 'spectrum', role: 'img', 'aria-label': `a spectrum from ${c.poles[0]} to ${c.poles[1]}` + (stance == null ? '' : `. this thought ${stanceWords(stance, c)}`) },
+    el('div', { class: 'track' }, stance == null ? null : el('span', { class: 'dot', style: `left:${50 + stance * 50}%` })),
+    el('div', { class: 'poles' }, el('span', null, c.poles[0]), el('span', null, c.poles[1])));
+}
+function settledLine(t) {
+  const now = Date.now(), b = bright(t, now), days = (now - t.touched) / DAY;
+  let w = b < .3 ? 'dim, still forming' : b < .55 ? 'settling' : b < .8 ? 'mostly settled' : 'settled';
+  if (days > 10 && b < t.settled - .03) w += ' · dimming, last touched ' + ago(t.touched);
+  return el('div', { class: 'settle' }, el('span', { class: 'bar', 'aria-hidden': 'true' }, el('i', { style: `width:${Math.round(b * 100)}%` })), el('span', null, w));
+}
+function careBlock(onEdit, onPlace) {
+  return el('div', { class: 'care', role: 'status' },
+    el('p', null, "this one sounds heavy, so it hasn't been placed."),
+    el('p', null, "if you're thinking about hurting yourself, you don't have to carry that alone. ",
+      el('a', { href: 'https://findahelpline.com', target: '_blank', rel: 'noopener noreferrer' }, 'find a free, confidential helpline near you'),
+      ' (findahelpline.com). in canada and the us you can call or text 988.'),
+    el('div', { class: 'row' }, btn('keep writing', onEdit), btn("it isn't about that. place it anyway", onPlace, 'link')));
+}
+const thoughtItem = (t, extra) => el('li', null,
+  el('button', { type: 'button', onclick: () => selectThought(t, { keepFocus: true }) }, snip(t.text, 150),
+    el('small', null, t.kind === 'result' ? t.src + (t.meta ? ' · ' + t.meta : '') : who(t) + ' · ' + ago(t.created))), extra);
+
+function selectThought(t, o = {}) {
+  if (linkFrom && linkFrom !== t && t.kind === 'own') return completeLink(t);
+  if (refineOrig && refineOrig.id !== t.id) cancelRefine();
+  sel = t; selCluster = null; kb = null; hover = null;
+  renderThought(t); openPanel();
+  if (o.fly !== false) {
+    const c = clusters.get(t.c), zc = fitCluster(c);
+    if (cam.z < zc * .78 || cam.z > zc * 2.2) flyTo(lerp(c.x, t.tx, .35), lerp(c.y, t.ty, .35), zc, 1600);
+    else { const v = viewSize(), sx = (t.tx - cam.x) * cam.z + vcT.x, sy = (t.ty - cam.y) * cam.z + vcT.y; if (sx < v.w * .14 || sx > v.w * .86 || sy < v.h * .16 || sy > v.h * .84) flyTo(t.tx, t.ty, cam.z, 900); }
+  }
+  if (o.keepFocus) panel.focus({ preventScroll: true });
+}
+function openCluster(c, o = {}) {
+  if (refineOrig) cancelRefine();
+  selCluster = c; sel = null; kb = null;
+  renderCluster(c); openPanel();
+  if (o.fly !== false) flyTo(c.x, c.y, fitCluster(c), 1700);
+  if (o.focus) panel.focus({ preventScroll: true });
+}
+const renderThought = (t, st = {}) => (t.kind === 'own' ? renderOwn : t.kind === 'result' ? renderResult : renderRoomThought)(t, st);
+const renderCluster = (c, st = {}) => (c.kind === 'galaxy' ? renderConstellation : c.kind === 'sky' ? renderSkyCluster : renderRoom)(c, st);
+
+/* refining: shared by your galaxy and by your thoughts in nebulae */
+let refineOrig = null;
+function cancelRefine() { const t = refineOrig && byId.get(refineOrig.id); if (t) { t.stance = refineOrig.stance; const c = clusters.get(t.c); if (c) layout(c); } refineOrig = null; }
+function refineForm(t, c, n) {
+  const own = t.kind === 'own';
+  if (!refineOrig) refineOrig = { id: t.id, stance: t.stance };
+  const ta = el('textarea', { id: 'rText', rows: '5', maxlength: '600' }); ta.value = t.text;
+  const note = el('div'), noteTa = own ? el('textarea', { id: 'rNote', rows: '4', maxlength: '2000', placeholder: 'anything you want to keep beside it.' }) : null;
+  if (noteTa) noteTa.value = t.note;
+  let range = null, read = () => t.stance;
+  n.push(el('div', { class: 'field' }, el('label', { for: 'rText' }, 'say it again, closer to what you mean'), ta));
+  if (noteTa) n.push(el('div', { class: 'field' }, el('label', { for: 'rNote' }, 'notes, only for you'), noteTa));
+  if (c.poles) {
+    range = el('input', { type: 'range', id: 'rStance', min: '-100', max: '100', step: '1' }); range.value = Math.round(t.stance * 100);
+    const where = el('p', { class: 'where' }, stanceWords(t.stance, c));
+    read = () => { const v = range.value / 100; return Math.abs(v) < .07 ? 0 : v; };
+    const sync = () => { const s = read(); t.stance = s; layout(c); where.textContent = stanceWords(s, c); range.setAttribute('aria-valuetext', stanceWords(s, c)); };
+    range.addEventListener('input', sync); sync();
+    n.push(el('div', { class: 'field' }, el('label', { for: 'rStance' }, 'where it sits now'), range, el('div', { class: 'poles' }, el('span', null, c.poles[0]), el('span', null, c.poles[1])), where));
+  }
+  let move = null;
+  if (own && clusters.size) {
+    move = el('select', { id: 'rMove' }, [...clusters.values()].map(k => { const o = el('option', { value: k.id }, cname(k)); if (k === c) o.selected = true; return o; }), el('option', { value: '+' }, 'a new constellation'));
+    n.push(el('div', { class: 'field' }, el('label', { for: 'rMove' }, 'which constellation it belongs to'), move));
+  }
+  const commit = cleared => {
+    const text = ta.value.trim(); if (!text) { ta.focus(); return; }
+    if (!cleared && isCrisis(text)) { note.replaceChildren(careBlock(() => { note.replaceChildren(); ta.focus(); }, () => commit(true))); return; }
+    t.text = text; t.stance = read(); if (noteTa) t.note = noteTa.value.trim();
+    t.settled = Math.min(1, t.settled + .22); t.touched = Date.now(); t.refines++; t.pulse = performance.now(); refineOrig = null;
+    if (move && move.value !== c.id) {
+      const to = move.value === '+' ? newConstellation(terms(text)) : clusters.get(move.value);
+      if (to) { t.c = to.id; t.stance = 0; t.oy = pickOy(to, xOf(t, to), null, t); if (move.value === '+') to.born = performance.now(); layout(to); tidy(c); }
+    }
+    const now = clusters.get(t.c); learn(t); layout(now); if (clusters.has(c.id)) layout(c); persist(t); renderThought(t); say('a little brighter.'); panel.focus({ preventScroll: true });
+    if (now !== c) flyTo(now.x, now.y, fitCluster(now), 1500);
+  };
+  n.push(note, el('div', { class: 'row' }, btn('settle', () => commit(false), 'b solid'), btn('cancel', () => { cancelRefine(); renderThought(t); })),
+    el('p', { class: 'note' }, 'each time you refine a thought it gets a little brighter. left alone, it slowly dims.'));
+}
+
+/* ───────── panels: your galaxy, nebulae, results ───────── */
+const shownAs = () => (store.profile.hidden ? 'someone' : store.profile.alias || (cloud.user && cloud.user.name) || 'someone');
+const isMember = c => c.founder === 'you' || (c.remote ? !!(cloud.user && c.members.includes(cloud.user.uid)) : !!store.rooms.joined[c.id]);
+function setMember(c, on) {
+  if (c.remote) return cloudJoin(c, on);
+  if (on) store.rooms.joined[c.id] = 1; else delete store.rooms.joined[c.id]; save();
+}
+const isRes = t => (t.res ? !!t.resMine : !!store.rooms.resonated[t.id]);
+function toggleRes(t) {
+  const c = clusters.get(t.c);
+  if (c.remote) { t.resMine = !t.resMine; if (t.resMine) t.pulse = performance.now(); return cloudRes(c, t, t.resMine); }
+  if (store.rooms.resonated[t.id]) delete store.rooms.resonated[t.id]; else { store.rooms.resonated[t.id] = 1; t.pulse = performance.now(); }
+  save();
+}
+const nearRoom = text => inSpace('nebulae', () => { const r = rankClusters(terms(text), clusters.values()).ranked[0]; return r && r.ok ? r.c : null; });
+const goRoom = c => Promise.resolve(goSpace('nebulae')).then(() => { if (space === 'nebulae' && clusters.get(c.id) === c) openCluster(c, { focus: true }); });
+function tidy(c) {   // an unnamed constellation with nothing left in it dissolves
+  if (c.kind !== 'galaxy' || c.name || members(c).length) return;
+  dropCluster(c); store.galaxy.clusters = store.galaxy.clusters.filter(d => d.id !== c.id); save();
+}
+
+/* ---------- galaxy ---------- */
+const linksOf = t => thoughts.filter(o => o !== t && (t.links.includes(o.id) || o.links.includes(t.id)));
+function completeLink(t) {
+  const a = linkFrom; linkFrom = null;
+  if (!linksOf(a).includes(t)) { a.links.push(t.id); persist(a); }
+  say('joined by a line.'); selectThought(a, { fly: false });
+}
+function unlink(a, b) { a.links = a.links.filter(x => x !== b.id); b.links = b.links.filter(x => x !== a.id); persist(a); persist(b); renderThought(a); }
+function removeOwn(t) {
+  const c = clusters.get(t.c), linked = linksOf(t);
+  dropThought(t); store.galaxy.thoughts = store.galaxy.thoughts.filter(d => d.id !== t.id);
+  for (const o of linked) persist(o);
+  layout(c); tidy(c); save(); say('removed.');
+}
+const shareTo = (t, room) => Promise.resolve(goSpace('nebulae')).then(() => { if (space === 'nebulae' && mode === 'map') place(t.text, room); });
+
+function renderOwn(t, st) {
+  const c = clusters.get(t.c), n = [head(crumb(c))];
+  n.push(el('p', { class: 'meta' }, 'you · ' + ago(t.created) + (t.refines ? ' · refined' : '')));
+  if (st.refine) { refineForm(t, c, n); return setPanel(n, 'refining a thought', true); }
+  n.push(el('p', { class: 'thought' }, t.text));
+  if (t.url) n.push(el('p', { class: 'note' }, 'kept from the open sky · ', el('a', { href: t.url, target: '_blank', rel: 'noopener noreferrer' }, t.src || 'source')));
+  if (t.note) n.push(el('p', { class: 'notes' }, t.note));
+  n.push(settledLine(t));
+  if (c.poles) n.push(el('div', { class: 'sec' }, el('h3', null, 'where it sits'), spectrumView(c, t.stance), el('p', { class: 'where' }, stanceWords(t.stance, c))));
+  n.push(el('div', { class: 'row' }, btn('refine', () => renderOwn(t, { refine: true })),
+    btn('join to another', () => { linkFrom = t; say('select another of your stars to draw a line to it.', 0); }),
+    btn('search the open sky', () => runSky(t.text)), btn('share to a nebula', () => renderOwn(t, { share: true }))));
+  const linked = linksOf(t);
+  if (linked.length) n.push(el('div', { class: 'sec' }, el('h3', null, 'joined to'),
+    el('ul', { class: 'list' }, linked.map(o => thoughtItem(o, el('button', { class: 'x', type: 'button', 'aria-label': 'remove this line', onclick: () => unlink(t, o) }, '×'))))));
+  const near = nearRoom(t.text);
+  if (st.share) {
+    const rooms = inSpace('nebulae', () => [...clusters.values()].filter(isMember)).sort((a, b) => (b === near) - (a === near));
+    n.push(el('div', { class: 'sec' }, el('h3', null, 'share to a nebula'),
+      rooms.length ? el('ul', { class: 'list' }, rooms.map(r => el('li', null, el('button', { type: 'button', onclick: () => shareTo(t, r) }, cname(r), el('small', null, r === near ? 'near this thought' : r.q || '')))))
+        : el('p', { class: 'note' }, "you haven't joined a nebula yet. glance at a few first."),
+      el('p', { class: 'note' }, `a copy goes there, shown as “${shownAs()}”. the original stays in your galaxy.`),
+      el('div', { class: 'row' }, btn('look at nebulae', () => goSpace('nebulae')), btn('cancel', () => renderOwn(t, {})))));
+  } else if (near) n.push(el('p', { class: 'note' }, 'this sits near the nebula ', btn(cname(near), () => goRoom(near), 'link'), '.'));
+  n.push(el('div', { class: 'row' }, btn(st.rm ? 'remove it for good' : 'remove', () => (st.rm ? removeOwn(t) : renderOwn(t, { rm: true })), 'link')));
+  setPanel(n, 'one of your thoughts', st.share || st.rm);
+}
+function renderConstellation(c, st) {
+  const m = members(c).sort((a, b) => a.created - b.created), n = [head(el('span', { class: 'meta' }, 'constellation · yours'))];
+  n.push(el('h2', { class: c.name ? null : 'unnamed' }, cname(c)));
+  if (c.q) n.push(el('p', { class: 'question' }, c.q));
+  else if (!c.name) n.push(el('p', { class: 'note' }, 'it gathered on its own around these words. you can name it.'));
+  if (c.poles) n.push(el('div', { class: 'sec' }, el('h3', null, 'its spectrum'), spectrumView(c, null), el('p', { class: 'where' }, 'thoughts start in the grey middle.')));
+  n.push(el('div', { class: 'row' }, btn('add a thought here', () => openCompose(c)), btn(c.name ? 'edit' : 'name it', () => openFound(c, 'galaxy')),
+    m.length ? null : btn('remove', () => { dropCluster(c); store.galaxy.clusters = store.galaxy.clusters.filter(d => d.id !== c.id); save(); })));
+  n.push(el('div', { class: 'sec' }, el('h3', null, 'thoughts'),
+    m.length ? el('ul', { class: 'list' }, m.map(t => thoughtItem(t))) : el('p', { class: 'note' }, 'nothing here yet.')));
+  setPanel(n, 'constellation: ' + cname(c));
+}
+
+/* ---------- nebulae ---------- */
+function renderRoomThought(t, st) {
+  const c = clusters.get(t.c), parent = t.re && byId.get(t.re), kids = thoughts.filter(o => o.re === t.id).sort((a, b) => a.created - b.created), member = isMember(c), n = [head(crumb(c))];
+  n.push(el('p', { class: 'meta' }, who(t) + ' · ' + ago(t.created) + (t.refines ? ' · refined' : '') + (t.mine ? ` · shown as “${t.alias || shownAs()}”` : '')));
+  if (st.refine) { refineForm(t, c, n); return setPanel(n, 'refining a thought', true); }
+  n.push(el('p', { class: 'thought' }, t.text), settledLine(t));
+  n.push(el('div', { class: 'sec' }, el('h3', null, 'where it sits'), spectrumView(c, t.stance), el('p', { class: 'where' }, stanceWords(t.stance, c))));
+  const acts = el('div', { class: 'row' });
+  if (t.mine) acts.append(btn('refine', () => renderRoomThought(t, { refine: true })));
+  else if (member) acts.append(el('button', { class: 'b', type: 'button', 'aria-pressed': String(isRes(t)), onclick: () => { toggleRes(t); renderRoomThought(t, st); panel.querySelector('[aria-pressed]').focus({ preventScroll: true }); } }, 'resonates'));
+  if (member && !st.reply) acts.append(btn('reply', () => { renderRoomThought(t, { reply: true }); const r = $('#reply'); r.focus(); r.scrollIntoView({ block: 'nearest' }); }));
+  if (acts.childNodes.length) n.push(acts);
+  if (!member) n.push(el('p', { class: 'note' }, "you're glancing. join this nebula to reply or resonate."),
+    el('div', { class: 'row' }, btn('join', () => { setMember(c, true); renderRoomThought(t, {}); say('joined.'); })));
+  if (!t.mine && isRes(t)) n.push(el('p', { class: 'note' }, 'it glows a little more now. nobody sees a number.'));
+
+  if (parent) n.push(el('div', { class: 'sec' }, el('h3', null, 'in reply to'), el('ul', { class: 'list' }, thoughtItem(parent))));
+  if (kids.length) n.push(el('div', { class: 'sec' }, el('h3', null, 'replies'), el('ul', { class: 'list' }, kids.map(k => thoughtItem(k)))));
+  if (st.reply) {
+    const ta = el('textarea', { id: 'reply', rows: '4', maxlength: '600', placeholder: "you don't have to be sure." }), note = el('div');
+    const send = cleared => {
+      const text = ta.value.trim(); if (!text) { ta.focus(); return; }
+      if (!cleared && isCrisis(text)) { note.replaceChildren(careBlock(() => { note.replaceChildren(); ta.focus(); }, () => send(true))); return; }
+      const now = Date.now(), id = c.remote ? 'f_' + cloudNewId(c) : uid('u');
+      const r = addThought({ id, c: c.id, kind: 'room', text, stance: 0, settled: .2, created: now, touched: now, mine: true, alias: shownAs(), re: t.id, oy: 0 });
+      if (c.remote) r.pending = true;
+      r.oy = pickOy(c, 0, t.oy, r); r.x = t.x; r.y = t.y; r.pulse = performance.now() + 500;
+      layout(c); persist(r); renderRoomThought(t, {}); say('a line is drawn between the two.'); panel.focus({ preventScroll: true });
+    };
+    ta.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(false); } });
+    n.push(el('div', { class: 'sec' }, el('div', { class: 'field' }, el('label', { for: 'reply' }, 'your reply becomes a star, joined to this one by a line'), ta), note,
+      el('div', { class: 'row' }, btn('send', () => send(false), 'b solid'), btn('cancel', () => renderRoomThought(t, {})))));
+  }
+  if (t.mine) n.push(el('div', { class: 'row' }, btn(st.rm ? 'remove it for good' : 'remove', () => {
+    if (!st.rm) return renderRoomThought(t, { rm: true });
+    if (c.remote) cloudDelete(c, t); else { store.rooms.thoughts = store.rooms.thoughts.filter(d => d.id !== t.id); save(); }
+    dropThought(t); layout(c); say('removed.');
+  }, 'link')));
+  setPanel(n, 'a thought in ' + cname(c), st.reply || st.rm);
+}
+function renderRoom(c, st) {
+  const m = members(c).sort((a, b) => a.stance - b.stance), member = isMember(c);
+  const n = [head(el('span', { class: 'meta' }, 'nebula · ' + (c.demo ? 'sample room' : c.remote ? 'shared room' : 'this browser only')))];
+  n.push(el('h2', null, cname(c)), el('p', { class: 'question' }, c.q || 'no guiding question yet.'));
+  n.push(el('p', { class: 'meta' }, (c.founder === 'you' ? 'founded by you' : c.demo ? 'founded by someone else' : 'founded by ' + (c.ownerAlias || 'someone')) + ' · ' + (member ? "you're a member" : "you're glancing")));
+  n.push(el('div', { class: 'sec' }, el('h3', null, 'its spectrum'), spectrumView(c, null), el('p', { class: 'where' }, 'every thought starts in the grey middle. its author can move it.')));
+  const acts = el('div', { class: 'row' });
+  if (member) acts.append(btn('add a thought here', () => openCompose(c)));
+  else acts.append(btn('join', () => { setMember(c, true); renderRoom(c, {}); say('joined. you can add, reply and resonate here.'); }, 'b solid'));
+  if (c.founder === 'you') acts.append(btn('edit', () => openFound(c, 'room')));
+  else if (member) acts.append(btn('leave', () => { setMember(c, false); renderRoom(c, {}); say('you left. you can still glance.'); }));
+  if (c.demo && member && !st.propose) acts.append(btn('propose a rename', () => { renderRoom(c, { propose: true }); $('#pName').focus(); }));
+  if (c.remote) acts.append(btn('copy invite link', async () => {
+    try { await navigator.clipboard.writeText(inviteLink(c)); say('invite link copied.'); } catch (e) { renderRoom(c, { link: true }); }
+  }));
+  n.push(acts);
+  if (st.link) { const i = el('input', { type: 'text', id: 'inv', readonly: true }); i.value = inviteLink(c); n.push(el('div', { class: 'field' }, el('label', { for: 'inv' }, 'copy this link and send it'), i)); }
+  if (!member) n.push(el('p', { class: 'note' }, 'glancing is free. joining lets you add thoughts, reply and resonate.'));
+
+  if (st.propose) {
+    const inp = el('input', { type: 'text', id: 'pName', maxlength: '40', autocomplete: 'off', placeholder: 'a name that fits better' });
+    const send = () => { const v = inp.value.trim().toLowerCase(); if (!v) { inp.focus(); return; } const p = { id: uid('p'), c: c.id, name: v, by: 'you', lean: .5 }; store.rooms.proposals.push(p); store.rooms.votes[p.id] = 'new'; save(); renderRoom(c, {}); say('proposed. it waits for the others.'); };
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); send(); } });
+    n.push(el('div', { class: 'field' }, el('label', { for: 'pName' }, 'propose a new name'), inp, el('div', { class: 'row' }, btn('propose', send, 'b solid'), btn('cancel', () => renderRoom(c, {})))));
+  }
+  for (const p of proposalsFor(c)) {
+    const my = store.rooms.votes[p.id], lean = clamp((p.lean == null ? .5 : p.lean) + (my === 'new' ? .07 : my === 'keep' ? -.07 : 0), .04, .96);
+    const tog = (label, val) => el('button', { class: 'b', type: 'button', 'aria-pressed': String(my === val), disabled: !member, onclick: () => { if (store.rooms.votes[p.id] === val) delete store.rooms.votes[p.id]; else store.rooms.votes[p.id] = val; save(); renderRoom(c, st); } }, label);
+    n.push(el('div', { class: 'vote' },
+      el('p', { class: 'meta' }, 'pending rename · proposed by ' + (p.by === 'you' ? 'you' : 'a member')),
+      el('p', null, el('q', null, p.name)),
+      el('div', { class: 'lean', role: 'img', 'aria-label': lean > .55 ? 'members lean toward the new name' : lean < .45 ? 'members lean toward keeping the current name' : 'members are split' }, el('i', { style: `width:${lean * 100}%` })),
+      el('div', { class: 'row' }, tog('take the new name', 'new'), tog('keep the current one', 'keep')),
+      el('p', { class: 'note' }, member ? 'it stays pending until more members weigh in.' : 'members decide this.')));
+  }
+  n.push(el('div', { class: 'sec' }, el('h3', null, m.length ? `thoughts, from “${c.poles[0]}” to “${c.poles[1]}”` : 'thoughts'),
+    m.length ? el('ul', { class: 'list' }, m.map(t => thoughtItem(t))) : el('p', { class: 'note' }, 'nothing here yet. the first thought will land in the middle.')));
+  setPanel(n, 'nebula: ' + cname(c), st.propose || st.link);
+}
+const inviteLink = c => location.href.split('#')[0] + '#room-' + c.remote;
+
+/* ---------- open sky ---------- */
+function renderResult(t) {
+  const c = clusters.get(t.c), launch = t.src === 'launch', n = [head(crumb(c))];
+  n.push(el('p', { class: 'meta' }, launch ? 'a doorway out' : t.src + (t.meta ? ' · ' + t.meta : '')));
+  n.push(el('p', { class: 'thought' }, t.text));
+  if (t.snippet) n.push(el('p', { class: 'notes' }, t.snippet));
+  n.push(el('div', { class: 'row' }, el('a', { class: 'b solid', href: t.url, target: '_blank', rel: 'noopener noreferrer' }, 'open in a new tab')));
+  if (!launch) n.push(el('div', { class: 'row' },
+    btn('keep in my galaxy', () => { keepOwn(t.text, { url: t.url, src: t.src, note: t.snippet }); t.pulse = performance.now(); say('kept in your galaxy.'); }),
+    btn('search from here', () => runSky(t.text))));
+  n.push(el('p', { class: 'note' }, launch ? "this opens that site's own search for your thought." : 'the open sky only points outward. the page itself opens in its own tab.'));
+  setPanel(n, 'something from the open sky');
+}
+function renderSkyCluster(c) {
+  const m = members(c), n = [head(el('span', { class: 'meta' }, 'in the open sky'))];
+  n.push(el('h2', null, cname(c)));
+  if (c.q) n.push(el('p', { class: 'question' }, c.q));
+  n.push(el('div', { class: 'sec' }, el('h3', null, 'what gathered here'), el('ul', { class: 'list' }, m.map(t => thoughtItem(t)))));
+  setPanel(n, 'in the open sky: ' + cname(c));
+}
+
+/* ---------- composing & the drift ---------- */
+function autosize() { mind.style.height = 'auto'; mind.style.height = mind.scrollHeight + 'px'; goBtn.classList.toggle('on', !!mind.value.trim()); }
+function openCompose(target) {
+  composeTarget = target || null;
+  $('#target').hidden = !composeTarget; if (composeTarget) $('#targetName').textContent = cname(composeTarget);
+  closePanel(); closeMenu(); hush(); linkFrom = null; spaceToken++; setMode('compose');
+  landing.classList.remove('leaving', 'first'); landing.inert = false; care.hidden = true;
+  mapRate = 2.4; mapAT = 0; const l = landingCam(); flyTo(l.x, l.y, l.z, 1300);
+  setTimeout(() => mind.focus({ preventScroll: true }), 60);
+}
+function leaveCompose() { landing.classList.add('leaving'); landing.inert = true; setMode('map'); mapRate = 2.4; mapAT = 1; showAll(1400); canvas.focus({ preventScroll: true }); }
+function submitMind(cleared) {
+  const text = mind.value.trim(); if (!text || mode === 'drift') return;
+  if (!cleared && isCrisis(text)) {
+    care.replaceChildren(careBlock(() => { care.hidden = true; mind.focus(); }, () => submitMind(true)));
+    care.hidden = false; return;
+  }
+  care.hidden = true; mind.value = ''; autosize(); mind.blur();
+  place(text, composeTarget);
+}
+async function place(text, target) {
+  const sp = target && target.kind === 'room' ? 'nebulae' : 'galaxy';
+  if (space !== sp) setSpace(sp);
+  syncNav(); closePanel(); setMode('drift'); visited = true; hush(); spaceToken++;
+  landing.classList.add('leaving'); landing.inert = true;
+  const tf = terms(text), { ranked, keywords } = rankClusters(tf, clusters.values());
+  let c = target || (ranked[0] && ranked[0].ok ? ranked[0].c : null), fresh = false;
+  if (!c) { fresh = true; c = newConstellation(tf); c.born = Infinity; }
+  const now = Date.now(), id = c.remote ? 'f_' + cloudNewId(c) : uid('u');
+  const t = addThought({ id, c: c.id, kind: sp === 'galaxy' ? 'own' : 'room', text, stance: 0, settled: .2, created: now, touched: now, mine: true, alias: shownAs(), oy: 0 });
+  if (c.remote) t.pending = true;
+  t.oy = pickOy(c, xOf(t, c), null, t); t.held = true; t.x = 0; t.y = 0; layout(c); persist(t);
+  drift = { t, from: { x: 0, y: 0 }, to: { x: t.tx, y: t.ty }, spawn: 0, line: 0, fade: 1, k: 0 };
+
+  mapRate = 2.4; const l = landingCam(); flyTo(l.x, l.y, l.z, 500);
+  await tween(1300, k => { drift.spawn = easeOut(k); });            // the thought condenses into a dim star
+  say(keywords.length ? keywords.join(' · ') : '· · ·', 0);          // what the system heard
+  await wait(1500);
+  mapAT = 1; await showAll(2200);                                    // the map opens around it
+  if (fresh) c.born = performance.now();
+  await tween(1100, k => { drift.line = ease(k); });                 // a thin line finds where it belongs
+  say(fresh ? (clusters.size === 1 ? 'your first constellation forms.' : 'nothing close yet. a new constellation forms.') : ['moved to: ', el('b', null, cname(c))], 0);
+  flyTo(c.x, c.y, fitCluster(c), 3200);                              // and the star drifts along it
+  await tween(3000, k => { const e = ease(k); drift.k = e; t.x = lerp(0, drift.to.x, e); t.y = lerp(0, drift.to.y, e); });
+  t.held = false; t.pulse = performance.now();
+  await tween(900, k => { drift.fade = 1 - k; });
+  drift = null;
+  setMode('map');
+  if (byId.get(t.id) === t) { selectThought(t, { fly: false }); if (!wide) flyTo(c.x, c.y, fitCluster(c), 1000); }
+  canvas.focus({ preventScroll: true });
+  sayTimer = setTimeout(() => captionEl.classList.remove('on'), 4200);
+}
+mind.addEventListener('input', autosize);
+mind.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); submitMind(false); } });
+$('#compose').addEventListener('submit', e => { e.preventDefault(); submitMind(false); });
+$('#wander').addEventListener('click', () => (visited ? leaveCompose() : goSpace(spaces.galaxy.thoughts.length ? 'galaxy' : 'nebulae')));
+$('#targetClear').addEventListener('click', () => { composeTarget = null; $('#target').hidden = true; mind.focus(); });
+$('#newBtn').addEventListener('click', () => openCompose());
+$('#zoomIn').addEventListener('click', () => zoomBy(1.5));
+$('#zoomOut').addEventListener('click', () => zoomBy(1 / 1.5));
+$('#zoomFit').addEventListener('click', () => showAll());
+for (const b of document.querySelectorAll('.scales button')) b.addEventListener('click', () => goSpace(b.dataset.space));
+
+/* ---------- the list menu ---------- */
+function closeMenu() { if (menu.hidden) return; menu.hidden = true; $('#menuBtn').setAttribute('aria-expanded', 'false'); }
+function buildMenu(focusIndex) {
+  const items = [], pick = (label, fn, cls, small) => el('button', { type: 'button', class: cls || null, onclick: fn }, label, small ? el('small', null, small) : null);
+  if (space === 'sky') {
+    items.push(el('p', { class: 'm-head' }, 'saved searches'));
+    if (!store.sky.saved.length) items.push(el('p', { class: 'm-note' }, 'nothing saved yet.'));
+    for (const s of store.sky.saved) items.push(pick(snip(s.q, 34), () => { closeMenu(); restoreSky(s); }, null, ago(s.ts)));
+    if (store.sky.saved.length) items.push(pick('forget saved searches', () => { store.sky.saved = []; save(); buildMenu(0); }, 'unnamed'));
+    items.push(el('hr'), el('p', { class: 'm-head' }, 'sources'));
+    SKY_SOURCES.concat([{ id: 'launch', name: 'doorways to other sites' }]).forEach((s, i) => items.push(el('button', { type: 'button', 'aria-pressed': String(store.sky.sources[s.id] !== false),
+      onclick: e => { store.sky.sources[s.id] = store.sky.sources[s.id] === false; save(); const k = [...menu.querySelectorAll('button')].indexOf(e.currentTarget); buildMenu(k); } }, s.name)));
+  } else {
+    const list = [...clusters.values()];
+    if (!list.length) items.push(el('p', { class: 'm-note' }, space === 'galaxy' ? 'no constellations yet.' : 'no nebulae here.'));
+    for (const c of list) items.push(pick(cname(c), () => { closeMenu(); openCluster(c, { focus: true }); }, c.name ? null : 'unnamed', c.kind === 'room' ? (c.demo ? 'sample' : c.remote ? 'shared' : 'yours') : null));
+    items.push(el('hr'), pick(space === 'galaxy' ? '+ new constellation' : '+ found a nebula', () => { closeMenu(); openFound(null, space === 'galaxy' ? 'galaxy' : 'room'); }));
+  }
+  menu.replaceChildren(...items);
+  const b = menu.querySelectorAll('button'); if (b.length) b[Math.min(focusIndex || 0, b.length - 1)].focus();
+}
+$('#menuBtn').addEventListener('click', () => {
+  if (!menu.hidden) return closeMenu();
+  menu.hidden = false; $('#menuBtn').setAttribute('aria-expanded', 'true'); buildMenu(0);
+});
+document.addEventListener('pointerdown', e => { if (!menu.hidden && !e.target.closest('.nav')) closeMenu(); });
+menu.addEventListener('keydown', e => {
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return; e.preventDefault();
+  const b = [...menu.querySelectorAll('button')], i = b.indexOf(document.activeElement);
+  b[(i + (e.key === 'ArrowDown' ? 1 : b.length - 1)) % b.length].focus();
+});
+
+/* ---------- dialogs ---------- */
+const about = $('#about'), found = $('#found'), you = $('#you');
+function openAbout() { if (!about.open) about.showModal(); }
+$('#aboutBtn').addEventListener('click', openAbout);
+$('#mark').addEventListener('click', openAbout);
+$('#aboutClose').addEventListener('click', () => about.close());
+for (const d of [about, found, you]) d.addEventListener('click', e => { if (e.target === d) d.close(); });
+let wipeArmed = false;
+$('#wipe').addEventListener('click', e => {
+  if (!wipeArmed) { wipeArmed = true; e.target.textContent = 'erase everything i wrote here'; return; }
+  try { localStorage.removeItem(KEY); localStorage.removeItem('grayzone.v1'); } catch (_) {}
+  storageOK = false; location.reload();
+});
+about.addEventListener('close', () => { wipeArmed = false; $('#wipe').textContent = 'clear my traces'; });
+
+function renderYou() {
+  $('#alias').value = store.profile.alias || '';
+  $('#hideBtn').setAttribute('aria-pressed', String(!!store.profile.hidden));
+  $('#hideNote').textContent = store.profile.hidden ? 'hidden. in nebulae you appear as “someone”.' : `in nebulae you appear as “${shownAs()}”.`;
+  $('#samplesBtn').setAttribute('aria-pressed', String(store.profile.samples !== false));
+  const k = [el('h3', null, 'sharing')];
+  if (!cloud.on) k.push(el('p', { class: 'note' }, "this copy isn't connected to a shared space, so nebulae you found live in this browser only. the readme explains how to connect it for free and sign in with google."));
+  else if (!cloud.ready) k.push(el('p', { class: 'note' }, cloud.err ? "couldn't reach the sign-in service. check the connection and the firebase settings." : 'connecting.'));
+  else if (cloud.user) k.push(el('p', { class: 'note' }, `signed in with google as ${cloud.user.full || 'you'}. nebulae you found are shared with everyone signed in to this copy.`), el('div', { class: 'row' }, btn('sign out', cloudSignOut)));
+  else k.push(el('p', { class: 'note' }, 'sign in to see shared nebulae and found your own.'), el('div', { class: 'row' }, btn('sign in with google', cloudSignIn, 'b solid')));
+  $('#acct').replaceChildren(...k);
+}
+$('#youBtn').addEventListener('click', () => { renderYou(); if (!you.open) you.showModal(); });
+$('#youClose').addEventListener('click', () => you.close());
+$('#alias').addEventListener('input', e => { store.profile.alias = e.target.value.trim().toLowerCase().slice(0, 24); save(); $('#hideNote').textContent = store.profile.hidden ? 'hidden. in nebulae you appear as “someone”.' : `in nebulae you appear as “${shownAs()}”.`; });
+$('#hideBtn').addEventListener('click', () => { store.profile.hidden = !store.profile.hidden; save(); renderYou(); });
+$('#samplesBtn').addEventListener('click', () => { store.profile.samples = store.profile.samples === false; save(); if (storageOK) location.reload(); else renderYou(); });
+you.addEventListener('close', () => refreshPanel());
+
+let foundFor = null, foundKind = 'room';
+function openFound(c, kind) {
+  foundFor = c || null; foundKind = kind;
+  const g = kind === 'galaxy';
+  $('#foundTitle').textContent = c ? (g ? 'name this constellation' : 'edit your nebula') : g ? 'new constellation' : 'found a nebula';
+  $('#fSave').textContent = c ? 'save' : g ? 'make it' : 'found it';
+  $('#fName').value = (c && c.name) || ''; $('#fQ').value = (c && c.q) || '';
+  const custom = c && c.poles && !(c.poles[0] === 'this' && c.poles[1] === 'that');
+  $('#fL').value = custom ? c.poles[0] : ''; $('#fR').value = custom ? c.poles[1] : '';
+  const note = $('#fNote'); note.classList.remove('warn');
+  note.textContent = g ? 'optional. name what each end cares about and your thoughts can sit between them.'
+    : c ? 'name what each end cares about. the grey middle is where everyone starts.'
+      : cloud.user ? 'it will be shared with everyone signed in to this copy.' : "it will live in this browser only until this copy is connected and you're signed in.";
+  if (!found.open) found.showModal(); $('#fName').focus();
+}
+$('#fCancel').addEventListener('click', () => found.close());
+$('#foundForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const name = $('#fName').value.trim().toLowerCase(), q = $('#fQ').value.trim().toLowerCase();
+  const L = $('#fL').value.trim().toLowerCase(), R = $('#fR').value.trim().toLowerCase(), note = $('#fNote'), g = foundKind === 'galaxy';
+  const warn = (msg, f) => { note.textContent = msg; note.classList.add('warn'); f.focus(); };
+  if (!name) return warn('it needs a name first.', $('#fName'));
+  if ((L && !R) || (R && !L)) return warn('a spectrum needs both ends, or leave both empty.', L ? $('#fR') : $('#fL'));
+  if (SIDE_WORDS.test(L) || SIDE_WORDS.test(R)) return warn('those read as sides. try naming what each end values, like “reach” and “rest”.', $('#fL'));
+  const poles = L ? [L, R] : g ? null : ['this', 'that'];
+  let c = foundFor;
+  if (c) {
+    c.name = name; c.q = q; c.poles = poles; rebuildTerms(c); layout(c);
+    if (c.remote) cloudEditRoom(c); else saveCluster(c);
+    found.close(); if (sel) renderThought(sel); else openCluster(c, { fly: false });
+    return say(['named: ', el('b', null, name)]);
+  }
+  if (g) {
+    c = newConstellation(null, name); c.q = q; c.poles = poles; c.born = performance.now(); rebuildTerms(c); layout(c, true); saveCluster(c);
+  } else if (cloud.user) {
+    found.close(); say('founding.', 0);
+    const rid = await cloudCreateRoom({ name, q, poles });
+    c = rid && spaces.nebulae.clusters.get('r_' + rid);
+    if (!c) return say("couldn't found it. check the firestore rules in the readme.", 7000);
+    if (space !== 'nebulae') return;
+  } else {
+    const p = freeSpot(), d = { id: uid('n'), name, q, poles, x: p.x, y: p.y, terms: '' };
+    store.rooms.clusters.push(d); save();
+    c = addCluster(Object.assign({}, d, { kind: 'room', founder: 'you' })); c.born = performance.now(); layout(c, true);
+  }
+  found.close(); openCluster(c, { focus: true });
+  say([g ? 'a new constellation: ' : 'founded: ', el('b', null, name)]);
+});
+
+/* ───────── open sky: a thought sent outward, results as stars ───────── */
+const sky = { q: '', text: '', results: [], busy: 0 };
+const enc = encodeURIComponent;
+async function jget(url, ms = 8000) {
+  const ac = new AbortController(), timer = setTimeout(() => ac.abort(), ms);
+  try { const r = await fetch(url, { signal: ac.signal }); if (!r.ok) throw new Error('http ' + r.status); return await r.json(); }
+  finally { clearTimeout(timer); }
+}
+const plain = html => { try { return new DOMParser().parseFromString(String(html || ''), 'text/html').body.textContent.replace(/\s+/g, ' ').trim(); } catch (e) { return ''; } };
+const host = u => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch (e) { return ''; } };
+const yearOf = d => { const y = new Date(d).getFullYear(); return y > 1000 ? String(y) : ''; };
+
+// every source here is free, needs no key, and allows requests straight from a web page
+const SKY_SOURCES = [
+  { id: 'wiki', name: 'wikipedia',
+    get: q => jget(`https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${enc(q)}&srlimit=8&srprop=snippet&format=json&origin=*`)
+      .then(d => ((d.query && d.query.search) || []).map(r => ({ title: r.title, snippet: plain(r.snippet), url: 'https://en.wikipedia.org/?curid=' + r.pageid }))) },
+  { id: 'hn', name: 'hacker news',
+    get: q => jget(`https://hn.algolia.com/api/v1/search?query=${enc(q)}&tags=story&hitsPerPage=8`)
+      .then(d => (d.hits || []).filter(h => h.title).map(h => ({ title: h.title, snippet: h.url ? 'a discussion of ' + host(h.url) : 'a discussion', meta: yearOf(h.created_at), url: 'https://news.ycombinator.com/item?id=' + h.objectID }))) },
+  { id: 'papers', name: 'papers (crossref)',
+    get: q => jget(`https://api.crossref.org/works?query=${enc(q)}&rows=8&select=title,URL,issued,container-title`)
+      .then(d => ((d.message && d.message.items) || []).filter(w => w.title && w.title[0] && w.URL).map(w => ({ title: plain(w.title[0]), snippet: (w['container-title'] && w['container-title'][0]) || '', meta: w.issued && w.issued['date-parts'] && w.issued['date-parts'][0] && w.issued['date-parts'][0][0] ? String(w.issued['date-parts'][0][0]) : '', url: w.URL }))) },
+  { id: 'books', name: 'books (open library)',
+    get: q => jget(`https://openlibrary.org/search.json?q=${enc(q)}&limit=8&fields=key,title,author_name,first_publish_year`)
+      .then(d => (d.docs || []).filter(b => b.title && b.key).map(b => ({ title: b.title, snippet: (b.author_name || []).slice(0, 2).join(', '), meta: b.first_publish_year ? String(b.first_publish_year) : '', url: 'https://openlibrary.org' + b.key }))) },
+  { id: 'archive', name: 'internet archive',
+    get: q => jget(`https://archive.org/advancedsearch.php?q=${enc(q)}&fl[]=identifier&fl[]=title&fl[]=mediatype&fl[]=year&rows=8&output=json`)
+      .then(d => ((d.response && d.response.docs) || []).filter(a => a.title && a.identifier).map(a => ({ title: String(Array.isArray(a.title) ? a.title[0] : a.title), snippet: a.mediatype ? String(a.mediatype) : '', meta: a.year ? String(a.year) : '', url: 'https://archive.org/details/' + enc(a.identifier) }))) },
+];
+const LAUNCHERS = [
+  ['google', 'https://www.google.com/search?q='], ['reddit', 'https://www.reddit.com/search/?q='], ['youtube', 'https://www.youtube.com/results?search_query='],
+  ['google scholar', 'https://scholar.google.com/scholar?q='], ['bluesky', 'https://bsky.app/search?q='],
+];
+const srcName = id => { const s = SKY_SOURCES.find(s => s.id === id); return s ? s.name : id; };
+
+const TOPICAL = new Set(); for (const d of SEED_CLUSTERS) for (const [st] of terms(d.terms)) TOPICAL.add(st);
+function skyQueries(text) {   // from the whole thought down to its heaviest words
+  const tf = terms(text), kw = [...tf.entries()].sort((a, b) => b[1].n - a[1].n || TOPICAL.has(b[0]) - TOPICAL.has(a[0]) || b[1].raw.length - a[1].raw.length).map(e => e[1].raw);
+  const words = text.trim().split(/\s+/), out = [];
+  if (words.length <= 5) out.push(text.trim().replace(/[?!.]+$/, ''));
+  if (kw.length) { out.push(kw.slice(0, 3).join(' ')); if (kw.length > 2) out.push(kw.slice(0, 2).join(' ')); if (kw.length > 1) out.push(kw[0]); }
+  return [...new Set(out.filter(Boolean))].slice(0, 3);
+}
+async function askSource(s, queries) {
+  let last = [];
+  for (const q of queries) {
+    const got = (await s.get(q)).filter(r => r && r.title && /^https?:\/\//.test(r.url)).slice(0, 8);
+    if (got.length >= 3) return got; if (got.length > last.length) last = got;
+  }
+  return last;
+}
+function themeGroups(results, qStems) {   // gather results around the words they share, beyond the ones you searched
+  const tfs = results.map(r => terms(r.title + ' ' + (r.snippet || ''))), raw = new Map();
+  for (const tf of tfs) for (const [s, e] of tf) if (!qStems.has(s) && !raw.has(s)) raw.set(s, e.raw);
+  const left = new Set(results.keys()), groups = [];
+  while (groups.length < 6 && left.size > 2) {
+    let best = null, bn = 1;
+    for (const [s, w] of raw) {
+      let n = 0; for (const i of left) if (tfs[i].has(s)) n++;
+      if (left.size > 6 && n > left.size * .6) continue;
+      if (n > bn || (n === bn && best && w.length > raw.get(best).length)) { best = s; bn = n; }
+    }
+    if (!best) break;
+    const idx = [...left].filter(i => tfs[i].has(best)); idx.forEach(i => left.delete(i));
+    let second = null, sn = Math.max(1, Math.floor(idx.length * .6));
+    for (const [s] of raw) { if (s === best) continue; let n = 0; for (const i of idx) if (tfs[i].has(s)) n++; if (n > sn) { second = s; sn = n; } }
+    groups.push({ name: raw.get(best) + (second ? ' · ' + raw.get(second) : ''), items: idx.map(i => results[i]) });
+    raw.delete(best);
+  }
+  if (left.size) groups.push({ name: groups.length ? 'loose ends' : 'what came back', items: [...left].map(i => results[i]) });
+  return groups;
+}
+function buildSky() {
+  const q = sky.q, on = id => store.sky.sources[id] !== false;
+  let groups;
+  if (store.sky.group === 'source') groups = SKY_SOURCES.map(s => ({ name: s.name, items: sky.results.filter(r => r.src === s.id) })).filter(g => g.items.length);
+  else groups = themeGroups(sky.results, new Set(terms(q + ' ' + sky.text).keys()));
+  groups = groups.slice(0, 7);
+  if (on('launch') && q) groups.push({ name: 'elsewhere', q: 'doorways to other places', items: LAUNCHERS.map(([n, u]) => ({ title: `search ${n} for “${snip(q, 60)}”`, url: u + enc(q), src: 'launch' })) });
+  inSpace('sky', () => {
+    clusters.clear(); thoughts.length = 0; byId.clear();
+    const now = performance.now();
+    groups.forEach((g, i) => {
+      const c = addCluster(Object.assign({ id: 'k' + i, kind: 'sky', name: g.name, q: g.q || '' }, SLOTS[i % SLOTS.length]));
+      c.born = now + i * 240;
+      g.items.slice(0, 12).forEach((r, j) => addThought({ id: 'k' + i + '_' + j, c: c.id, kind: 'result', text: r.title, snippet: r.snippet, meta: r.meta, url: r.url,
+        src: r.src === 'launch' ? 'launch' : srcName(r.src), settled: clamp(.92 - (r.rank || 0) * .08, .3, .92) }));
+      layout(c, true);
+    });
+  });
+  $('#skyGroup').textContent = store.sky.group === 'source' ? 'by source' : 'by theme';
+  if (space === 'sky' && mode === 'map') { closePanel(); showAll(1600); }
+}
+async function runSky(text, exact) {
+  text = String(text || '').trim(); if (!text || mode === 'drift') return;
+  if (isCrisis(text)) { await goSpace('sky'); return say(['that sounds heavy. you can talk to someone now: ', el('a', { href: 'https://findahelpline.com', target: '_blank', rel: 'noopener noreferrer' }, 'findahelpline.com'), ' · call or text 988 in canada and the us.'], 0); }
+  const id = ++sky.busy;
+  if (space !== 'sky' || mode !== 'map') await goSpace('sky');
+  if (id !== sky.busy) return;
+  const queries = exact ? [text] : skyQueries(text);
+  sky.text = text; sky.q = queries[0] || text; sky.results = [];
+  $('#skyQ').value = sky.q; buildSky(); say('listening to the open sky.', 0);
+  const srcs = SKY_SOURCES.filter(s => store.sky.sources[s.id] !== false), failed = [], answered = [];
+  await Promise.all(srcs.map(s => askSource(s, queries).then(rs => { if (rs.length) answered.push(s.name); rs.forEach((r, k) => sky.results.push(Object.assign(r, { src: s.id, rank: k }))); }, () => failed.push(s.name))));
+  if (id !== sky.busy) return;
+  buildSky();
+  if (!srcs.length) say('every source is switched off. the doorways still work.', 6000);
+  else if (!answered.length) say(failed.length === srcs.length ? "couldn't reach the open web from here. the doorways still open in a new tab." : 'nothing came back for that. try fewer words.', 8000);
+  else say((failed.length ? failed.join(', ') + " didn't answer. " : '') + 'select a star to open it.', 6000);
+}
+function restoreSky(s) {
+  sky.busy++; sky.q = s.q; sky.text = s.text || s.q; sky.results = (s.results || []).map(r => Object.assign({}, r));
+  $('#skyQ').value = s.q;
+  Promise.resolve(space === 'sky' && mode === 'map' ? null : goSpace('sky')).then(() => { buildSky(); say(['saved search: ', el('b', null, snip(s.q, 50))]); });
+}
+$('#skyBar').addEventListener('submit', e => { e.preventDefault(); const v = $('#skyQ').value.trim(); if (v) { $('#skyQ').blur(); runSky(v, true); } });
+$('#skyGroup').addEventListener('click', () => { store.sky.group = store.sky.group === 'source' ? 'theme' : 'source'; save(); buildSky(); });
+$('#skySave').addEventListener('click', () => {
+  if (!sky.q) return say('search for something first.');
+  store.sky.saved = store.sky.saved.filter(s => s.q !== sky.q);
+  store.sky.saved.unshift({ id: uid('s'), q: sky.q, text: sky.text, ts: Date.now(), results: sky.results.slice(0, 60).map(r => ({ title: r.title, snippet: snip(r.snippet || '', 240), meta: r.meta, url: r.url, src: r.src, rank: r.rank })) });
+  store.sky.saved = store.sky.saved.slice(0, 12); save(); say('saved. find it under searches.');
+});
+
+/* ───────── shared nebulae: google sign-in + firestore, only when a firebase config is pasted in ───────── */
+const cloud = { on: false, ready: false, user: null, err: '', U: null, F: null, auth: null, db: null, offRooms: null, offThoughts: new Map(), invite: null };
+const FB = 'https://www.gstatic.com/firebasejs/12.19.0/';
+const cloudFail = (what, e) => { cloud.err = (e && (e.code || e.message)) || 'error'; say(`couldn't ${what}. ` + (/permission/.test(cloud.err) ? 'check the firestore rules in the readme.' : 'check the connection.'), 7000); };
+
+async function cloudInit() {
+  const cfg = window.GRAY_ZONE_FIREBASE;
+  { const m = /^#room-([\w-]{4,40})$/.exec(location.hash || ''); if (m) cloud.invite = m[1]; }
+  if (!cfg || !cfg.apiKey || !cfg.projectId) { if (cloud.invite) say("this copy isn't connected, so invite links don't open here.", 7000); return; }
+  cloud.on = true; $('#protoNote').textContent = 'this is a prototype. the sample nebulae are seeded voices. your galaxy stays in this browser. shared nebulae are kept in this copy’s firebase project.';
+  try {
+    const [A, U, F] = await Promise.all([import(FB + 'firebase-app.js'), import(FB + 'firebase-auth.js'), import(FB + 'firebase-firestore.js')]);
+    const app = A.initializeApp(cfg);
+    cloud.U = U; cloud.F = F; cloud.auth = U.getAuth(app); cloud.db = F.getFirestore(app); cloud.ready = true;
+    U.onAuthStateChanged(cloud.auth, u => {
+      const name = u && (u.displayName || '');
+      cloud.user = u ? { uid: u.uid, full: name || 'you', name: name.split(/\s+/)[0].toLowerCase().slice(0, 24) } : null;
+      cloudWatch(); renderYou(); refreshPanel();
+      if (cloud.invite && !cloud.user) { renderYou(); if (!you.open) you.showModal(); say('sign in to open the nebula you were invited to.', 0); }
+    });
+  } catch (e) { cloud.err = String((e && e.message) || e); }
+  renderYou();
+}
+async function cloudSignIn() {
+  if (!cloud.ready) return;
+  try { await cloud.U.signInWithPopup(cloud.auth, new cloud.U.GoogleAuthProvider()); if (you.open) you.close(); say('signed in.'); }
+  catch (e) {
+    const code = (e && e.code) || '';
+    say(code === 'auth/unauthorized-domain' ? "google doesn't know this address yet. add it under authorized domains in firebase."
+      : code === 'auth/operation-not-allowed' ? 'google sign-in is switched off in firebase. enable it under authentication.'
+        : /popup/.test(code) ? "the sign-in window didn't finish. allow pop-ups and try again." : "couldn't sign in. " + code, 8000);
+  }
+}
+async function cloudSignOut() { try { await cloud.U.signOut(cloud.auth); say('signed out.'); } catch (e) { cloudFail('sign out', e); } }
+
+function cloudWatch() {   // (re)subscribe to the shared rooms for whoever is signed in
+  if (cloud.offRooms) { cloud.offRooms(); cloud.offRooms = null; }
+  for (const off of cloud.offThoughts.values()) off(); cloud.offThoughts.clear();
+  inSpace('nebulae', () => { for (const c of [...clusters.values()]) if (c.remote) dropCluster(c); });
+  if (!cloud.user) return;
+  const F = cloud.F;
+  cloud.offRooms = F.onSnapshot(F.query(F.collection(cloud.db, 'nebulae'), F.orderBy('created'), F.limit(60)), snap => {
+    inSpace('nebulae', () => {
+      const seen = new Set();
+      snap.forEach(d => { seen.add('r_' + d.id); cloudRoom(d.id, d.data() || {}); });
+      for (const c of [...clusters.values()]) if (c.remote && !seen.has(c.id)) { const off = cloud.offThoughts.get(c.id); if (off) { off(); cloud.offThoughts.delete(c.id); } dropCluster(c); }
+    });
+    refreshPanel(); cloudInvite();
+  }, e => cloudFail('read the shared nebulae', e));
+}
+function cloudRoom(rid, d) {   // runs inside the nebulae space
+  const id = 'r_' + rid, uidMe = cloud.user.uid; let c = clusters.get(id);
+  const name = String(d.name || '').slice(0, 40), q = String(d.q || '').slice(0, 90), poles = validPoles(d.poles) || ['this', 'that'];
+  if (!c) {
+    c = addCluster(Object.assign({ id, kind: 'room', name, q, poles, terms: '' }, freeSpot())); c.remote = rid; c.born = performance.now(); layout(c, true);
+    const F = cloud.F;
+    cloud.offThoughts.set(id, F.onSnapshot(F.query(F.collection(cloud.db, 'nebulae', rid, 'thoughts'), F.orderBy('created'), F.limit(150)), snap => {
+      inSpace('nebulae', () => {
+        if (clusters.get(id) !== c) return;
+        const seen = new Set();
+        snap.forEach(doc => {
+          const v = doc.data() || {}, tid = 'f_' + doc.id, res = Array.isArray(v.res) ? v.res : []; seen.add(tid);
+          let t = byId.get(tid);
+          if (!t) { t = addThought({ id: tid, c: id, kind: 'room', text: v.text, stance: v.stance, settled: v.settled, created: v.created, touched: v.touched, refines: v.refines, re: v.re ? 'f_' + v.re : null }); t.x = c.x; t.y = c.y; t.pulse = performance.now(); }
+          else if (!(refineOrig && refineOrig.id === tid)) { t.text = String(v.text || ''); t.stance = clamp(+v.stance || 0, -1, 1); t.settled = clamp(+v.settled || .2, .1, 1); t.touched = +v.touched || t.touched; t.refines = v.refines || 0; }
+          t.pending = false; t.uid = v.uid; t.mine = v.uid === uidMe; t.alias = String(v.alias || 'someone').slice(0, 24);
+          t.res = res; t.resMine = res.includes(uidMe); t.glow = Math.min(.9, res.length * .22);
+        });
+        for (const t of members(c)) if (!seen.has(t.id) && !t.pending) dropThought(t);
+        layout(c);
+      });
+      refreshPanel();
+    }, e => cloudFail('read that nebula', e)));
+  } else if (c.name !== name || c.q !== q || String(c.poles) !== String(poles)) { c.name = name || null; c.q = q; c.poles = poles; rebuildTerms(c); }
+  c.members = Array.isArray(d.members) ? d.members : []; c.owner = d.owner; c.ownerAlias = String(d.ownerAlias || 'someone').slice(0, 24);
+  c.founder = d.owner === uidMe ? 'you' : 'other';
+}
+function cloudInvite() {   // an invite link looks like …#room-<id>
+  if (!cloud.invite || !cloud.user) return;
+  const c = spaces.nebulae.clusters.get('r_' + cloud.invite); if (!c) return;
+  cloud.invite = null; if (mode === 'drift') return;
+  Promise.resolve(goSpace('nebulae')).then(() => { if (space === 'nebulae') { openCluster(c, { focus: true }); say(['you were invited to: ', el('b', null, cname(c))], 6000); } });
+}
+const cloudDoc = (c, t) => cloud.F.doc(cloud.db, 'nebulae', c.remote, 'thoughts', t.id.slice(2));
+const cloudNewId = c => cloud.F.doc(cloud.F.collection(cloud.db, 'nebulae', c.remote, 'thoughts')).id;
+function cloudSetThought(c, t) {
+  cloud.F.setDoc(cloudDoc(c, t), { text: t.text, stance: t.stance, settled: t.settled, created: t.created, touched: t.touched, refines: t.refines,
+    re: t.re ? t.re.slice(2) : null, uid: cloud.user.uid, alias: t.alias || shownAs() }, { merge: true }).catch(e => cloudFail('send that to the nebula', e));
+}
+const cloudDelete = (c, t) => cloud.F.deleteDoc(cloudDoc(c, t)).catch(e => cloudFail('remove that', e));
+const cloudRes = (c, t, on) => cloud.F.updateDoc(cloudDoc(c, t), { res: on ? cloud.F.arrayUnion(cloud.user.uid) : cloud.F.arrayRemove(cloud.user.uid) }).catch(e => cloudFail('save that', e));
+function cloudJoin(c, on) {
+  const me = cloud.user.uid; c.members = on ? c.members.concat(me) : c.members.filter(u => u !== me);
+  cloud.F.updateDoc(cloud.F.doc(cloud.db, 'nebulae', c.remote), { members: on ? cloud.F.arrayUnion(me) : cloud.F.arrayRemove(me) }).catch(e => cloudFail(on ? 'join' : 'leave', e));
+}
+const cloudEditRoom = c => cloud.F.updateDoc(cloud.F.doc(cloud.db, 'nebulae', c.remote), { name: c.name, q: c.q, poles: c.poles }).catch(e => cloudFail('save the nebula', e));
+async function cloudCreateRoom({ name, q, poles }) {
+  try {
+    const ref = cloud.F.doc(cloud.F.collection(cloud.db, 'nebulae'));
+    await cloud.F.setDoc(ref, { name, q, poles, owner: cloud.user.uid, ownerAlias: shownAs(), created: Date.now(), members: [cloud.user.uid] });
+    if (!spaces.nebulae.clusters.has('r_' + ref.id)) inSpace('nebulae', () => cloudRoom(ref.id, { name, q, poles, owner: cloud.user.uid, ownerAlias: shownAs(), members: [cloud.user.uid] }));
+    return ref.id;
+  } catch (e) { cloudFail('found the nebula', e); return null; }
+}
+
+/* ───────── start ───────── */
+if (legacy) {   // thoughts from the first version move into the galaxy
+  for (const o of legacy.thoughts) if (o && typeof o.text === 'string' && o.text.trim() && !o.re) keepOwn(o.text, { created: o.created, touched: o.touched, settled: o.settled, refines: o.refines });
+  for (const t of spaces.galaxy.thoughts) t.pulse = -1e7;
+  save();
+}
+window.addEventListener('resize', resize);
+resize();
+{ const l = landingCam(); Object.assign(cam, l); Object.assign(goal, l); vc.x = vcT.x; vc.y = vcT.y; }
+setMode('landing'); syncNav(); autosize(); renderYou();
+requestAnimationFrame(frame);
+cloudInit();
+if (!matchMedia('(pointer: coarse)').matches) setTimeout(() => { if (mode === 'landing') mind.focus({ preventScroll: true }); }, 400);
+
+})();
+</script>
+</body>
+</html>
